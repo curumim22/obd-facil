@@ -65,6 +65,14 @@ class ObdParserTest {
         assertEquals(Level.OK, HealthAnalyzer.overall(alerts))
     }
 
+    @Test fun trimIgnoredWhenColdOrBrief() {
+        val cold = LiveData(rpm = 900, coolantC = 40, shortTrimPct = 10.0, longTrimPct = 20.0)
+        assertEquals(Level.OK, HealthAnalyzer.overall(HealthAnalyzer.analyze(cold, emptyList(), 60_000)))
+        val warm = cold.copy(coolantC = 88)
+        assertEquals(Level.OK, HealthAnalyzer.overall(HealthAnalyzer.analyze(warm, emptyList(), 5_000)))
+        assertEquals(Level.WARNING, HealthAnalyzer.overall(HealthAnalyzer.analyze(warm, emptyList(), 31_000)))
+    }
+
     @Test fun misfireIsCritical() {
         val alerts = HealthAnalyzer.analyze(LiveData(), listOf(DtcDatabase.lookup("P0301")))
         assertEquals(Level.CRITICAL, HealthAnalyzer.overall(alerts))

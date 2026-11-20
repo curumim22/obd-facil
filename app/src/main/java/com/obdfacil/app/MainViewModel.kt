@@ -94,6 +94,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var tripId: Long? = null
     private var stats = TripStats()
     private var sampleCount = 0
+    private var trimHighSince: Long? = null
     private var lastSampleSaved = 0L
     private val activeKeys = mutableMapOf<String, Level>()
     private val dismissedCritical = mutableSetOf<String>()
@@ -155,7 +156,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loop?.cancel(); loop = null
         client?.close(); client = null
         endTrip()
-        activeKeys.clear(); dismissedCritical.clear()
+        activeKeys.clear(); dismissedCritical.clear(); trimHighSince = null
         _ui.update { it.copy(conn = ConnState.DISCONNECTED, live = LiveData(), recent = emptyList(), alerts = emptyList(),
             overall = Level.OK, connStep = "", tripStartTs = null, tripKm = 0.0) }
     }
@@ -188,7 +189,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         tripId?.let { id ->
             if (d.timestamp - lastSampleSaved >= 2000) { db.addSample(id, d); lastSampleSaved = d.timestamp; sampleCount++ }
         }
-        val alerts = HealthAnalyzer.analyze(d, _ui.value.stored + _ui.value.pending)
+        // Conta há quanto tempo a correção da mistura está fora do normal
+        trimHighSince = if (HealthAnalyzer.trimOutOfRange(d)) (trimHighSince ?: d.timestamp) else null
+        val trimHighFor = trimHighSince?.let { d.timestamp - it } ?: 0L
+        val alerts = HealthAnalyzer.analyze(d, _ui.value.stored + _ui.value.pending, trimHighFor)
         handleAlerts(alerts)
         _ui.update { s ->
             val cutoff = d.timestamp - 120_000

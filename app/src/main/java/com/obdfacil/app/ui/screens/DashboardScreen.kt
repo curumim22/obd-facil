@@ -218,9 +218,12 @@ private fun LivePanel(s: UiState) {
                         DetailRow("Temperatura do ar", "Ar que entra no motor. Normal: até 60 °C", d.intakeC?.let { "$it °C" } ?: "--",
                             d.intakeC?.let { if (it > 65) Level.WARNING else Level.OK })
                         val trim = (d.shortTrimPct ?: 0.0) + (d.longTrimPct ?: 0.0)
-                        DetailRow("Ajuste da mistura", "Quanto a central corrige o combustível. Ideal: perto de 0%",
+                        val reliable = HealthAnalyzer.trimReliable(d)
+                        DetailRow("Ajuste da mistura",
+                            if (reliable || d.longTrimPct == null) "Quanto a central corrige o combustível. Ideal: perto de 0%"
+                            else "Motor ainda frio: este valor só vale acima de ${HealthAnalyzer.WARM_ENGINE_C} °C",
                             d.longTrimPct?.let { "%+.0f%%".format(trim) } ?: "--",
-                            d.longTrimPct?.let { if (kotlin.math.abs(trim) >= 20) Level.WARNING else Level.OK })
+                            d.longTrimPct?.let { if (!reliable) null else if (kotlin.math.abs(trim) >= HealthAnalyzer.TRIM_LIMIT) Level.WARNING else Level.OK })
                         DetailRow("Pressão no coletor", "Vácuo do motor. Em marcha lenta: 25 a 40 kPa", d.mapKpa?.let { "$it kPa" } ?: "--", d.mapKpa?.let { Level.OK })
                         DetailRow("Avanço da ignição", "Momento da faísca, ajustado pela central", d.timingDeg?.let { "%.0f°".format(it) } ?: "--", d.timingDeg?.let { Level.OK })
                         DetailRow("Luz da injeção", "Luz de aviso do motor no painel",
