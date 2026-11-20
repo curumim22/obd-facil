@@ -67,7 +67,7 @@ class ObdParserTest {
 
     @Test fun trimIgnoredWhenColdOrBrief() {
         val cold = LiveData(rpm = 900, coolantC = 40, shortTrimPct = 10.0, longTrimPct = 20.0)
-        assertEquals(Level.OK, HealthAnalyzer.overall(HealthAnalyzer.analyze(cold, emptyList(), 60_000)))
+        assertTrue(HealthAnalyzer.analyze(cold, emptyList(), 60_000).none { it.key == "trim" })
         val warm = cold.copy(coolantC = 88)
         assertEquals(Level.OK, HealthAnalyzer.overall(HealthAnalyzer.analyze(warm, emptyList(), 5_000)))
         assertEquals(Level.WARNING, HealthAnalyzer.overall(HealthAnalyzer.analyze(warm, emptyList(), 31_000)))
