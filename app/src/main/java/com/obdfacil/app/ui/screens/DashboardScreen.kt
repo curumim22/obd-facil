@@ -235,7 +235,7 @@ private fun LivePanel(s: UiState) {
         }
 
         item {
-            Text("${if (s.isDemo) "Modo demonstração · " else ""}${s.adapter} · ${s.protocol} · ${s.supportedCount} sensores disponíveis",
+            Text("${if (s.isDemo) "Modo demonstração (nada é gravado) · " else ""}${s.adapter} · ${s.protocol} · ${s.supportedCount} sensores disponíveis",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Normal, modifier = Modifier.padding(bottom = 24.dp))
         }

@@ -35,11 +35,11 @@ class TripStats {
     var speedSum = 0.0; var speedCount = 0; var alerts = 0
     private var lastTs: Long? = null
 
-    fun add(d: LiveData) {
+    fun add(d: LiveData, maxGapMs: Long = 10_000) {
         val s = d.speedKmh
         lastTs?.let { prev ->
-            val dtH = (d.timestamp - prev) / 3_600_000.0
-            if (s != null && dtH in 0.0..0.01) distanceKm += s * dtH
+            val gap = d.timestamp - prev
+            if (s != null && gap in 0..maxGapMs) distanceKm += s * gap / 3_600_000.0
         }
         lastTs = d.timestamp
         s?.let { maxSpeed = maxOf(maxSpeed, it); if (it > 0) { speedSum += it; speedCount++ } }
@@ -135,6 +135,25 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
             c.intOrNull("mil")?.let { it == 1 },
             c.str("codes").split(',').filter { it.isNotBlank() },
             c.str("pending").split(',').filter { it.isNotBlank() })) }
+    }
+
+    /**
+     * Viagens que ficaram sem resumo (app fechado à força, celular desligado, atualização do app):
+     * recalcula o resumo a partir das leituras gravadas. Viagens curtas demais são descartadas.
+     */
+    fun repairOpenTrips(exceptId: Long? = null) {
+        val open = readableDatabase.rawQuery("SELECT id FROM trips WHERE end_ts IS NULL", null).use { c ->
+            buildList { while (c.moveToNext()) add(c.getLong(0)) }
+        }.filter { it != exceptId }
+        for (id in open) {
+            val samples = samples(id)
+            if (samples.size < 5) { deleteTrip(id); continue }
+            val stats = TripStats()
+            samples.forEach { stats.add(it, maxGapMs = 10_000) }
+            stats.alerts = readableDatabase.rawQuery("SELECT COUNT(*) FROM events WHERE trip_id=?", arrayOf(id.toString()))
+                .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+            finishTrip(id, stats, samples.last().timestamp)
+        }
     }
 
     fun deleteTrip(id: Long) {

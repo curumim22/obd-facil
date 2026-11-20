@@ -24,7 +24,9 @@ import com.obdfacil.app.export.Exporter
 import com.obdfacil.app.obd.BluetoothTransport
 import com.obdfacil.app.obd.DemoTransport
 import com.obdfacil.app.obd.LiveData
+import com.obdfacil.app.obd.LoggingTransport
 import com.obdfacil.app.obd.ObdClient
+import com.obdfacil.app.obd.TechLog
 import com.obdfacil.app.obd.Pid
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +78,8 @@ data class UiState(
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
+    companion object { private const val REPEAT_MS = 10 * 60_000L }
+
     private val ctx: Context get() = getApplication()
     private val prefs = app.getSharedPreferences("obd", Context.MODE_PRIVATE)
     val db = HistoryDb(app)
@@ -95,11 +99,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var stats = TripStats()
     private var sampleCount = 0
     private var trimHighSince: Long? = null
+    private var lastSummarySaved = 0L
+    /** Última vez que cada alerta foi gravado no histórico, para não repetir. */
+    private val lastLogged = mutableMapOf<String, Pair<Long, Level>>()
     private var lastSampleSaved = 0L
     private val activeKeys = mutableMapOf<String, Level>()
     private val dismissedCritical = mutableSetOf<String>()
 
-    init { refreshHistory() }
+    init {
+        viewModelScope.launch(Dispatchers.IO) { runCatching { db.repairOpenTrips() }; refreshHistory() }
+    }
 
     // ---------- Bluetooth ----------
 
@@ -119,14 +128,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val device = runCatching { adapter.getRemoteDevice(address) }.getOrNull() ?: return
         prefs.edit().putString("device", address).apply()
         _ui.update { it.copy(savedDevice = address) }
-        start(ObdClient(BluetoothTransport(adapter, device)), isDemo = false)
+        TechLog.newSession("Adaptador ${runCatching { device.name }.getOrNull() ?: address}")
+        start(ObdClient(LoggingTransport(BluetoothTransport(adapter, device))), isDemo = false)
     }
 
     fun connectDemo() {
         val t = DemoTransport().also { demo = it }
         t.simulateOverheat = _ui.value.demoOverheat
         t.simulateLowBattery = _ui.value.demoLowBattery
-        start(ObdClient(t), isDemo = true)
+        TechLog.newSession("Modo demonstração")
+        start(ObdClient(LoggingTransport(t)), isDemo = true)
     }
 
     private fun start(c: ObdClient, isDemo: Boolean) {
@@ -137,9 +148,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 _ui.update { it.copy(connStep = "Conversando com o carro… (pode levar até 15 segundos)") }
                 c.initialize()
+                TechLog.info = "OBD Fácil ${BuildConfig.VERSION_NAME} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n" +
+                    "Veículo: ${_ui.value.vehicle}\nAdaptador: ${c.adapterVersion} · Protocolo: ${c.protocolName} (${c.protocolNumber})\n" +
+                    "PIDs suportados: ${c.supported.sorted().joinToString(" ") { "%02X".format(it) }}"
                 _ui.update { it.copy(conn = ConnState.CONNECTED, protocol = c.protocolName, adapter = c.adapterVersion,
                     supportedCount = c.supported.size, connStep = "") }
-                beginTrip()
+                if (!isDemo) beginTrip()
                 scanDtcsInternal(c)
                 pollLoop(c)
             } catch (e: CancellationException) {
@@ -188,11 +202,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         stats.add(d)
         tripId?.let { id ->
             if (d.timestamp - lastSampleSaved >= 2000) { db.addSample(id, d); lastSampleSaved = d.timestamp; sampleCount++ }
+            // Guarda o resumo a cada 30 s: se o app for fechado de repente, a viagem não se perde
+            if (d.timestamp - lastSummarySaved >= 30_000 && sampleCount >= 5) {
+                db.finishTrip(id, stats, d.timestamp); lastSummarySaved = d.timestamp
+            }
         }
         // Conta há quanto tempo a correção da mistura está fora do normal
-        trimHighSince = if (HealthAnalyzer.trimOutOfRange(d)) (trimHighSince ?: d.timestamp) else null
+        val trimActive = _ui.value.alerts.any { it.key == "trim" }
+        val trimLimit = if (trimActive) HealthAnalyzer.TRIM_RELEASE else HealthAnalyzer.TRIM_LIMIT
+        trimHighSince = if (HealthAnalyzer.trimOutOfRange(d, trimLimit)) (trimHighSince ?: d.timestamp) else null
         val trimHighFor = trimHighSince?.let { d.timestamp - it } ?: 0L
-        val alerts = HealthAnalyzer.analyze(d, _ui.value.stored + _ui.value.pending, trimHighFor)
+        val alerts = HealthAnalyzer.analyze(d, _ui.value.stored + _ui.value.pending, trimHighFor, trimLimit)
         handleAlerts(alerts)
         _ui.update { s ->
             val cutoff = d.timestamp - 120_000
@@ -201,12 +221,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Grava e avisa só quando um alerta é novo, quando piora, ou depois de 10 minutos.
+     * Assim um valor oscilando perto do limite não gera dezenas de alertas iguais.
+     */
     private fun handleAlerts(alerts: List<Alert>) {
+        val nowTs = System.currentTimeMillis()
         val now = alerts.filter { it.level >= Level.WARNING }.associateBy { it.key }
         for ((key, a) in now) {
-            val prev = activeKeys[key]
-            if (prev == null || a.level > prev) {
-                db.addEvent(tripId, a); stats.alerts++
+            val last = lastLogged[key]
+            val isNews = last == null || a.level > last.second || nowTs - last.first >= REPEAT_MS
+            if (isNews) {
+                lastLogged[key] = nowTs to a.level
+                if (!_ui.value.isDemo) { db.addEvent(tripId, a); stats.alerts++ }
                 if (a.level == Level.CRITICAL && key !in dismissedCritical) {
                     vibrate()
                     _ui.update { it.copy(popup = a) }
@@ -214,8 +241,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             activeKeys[key] = a.level
         }
-        // alerta que sumiu pode voltar a avisar no futuro
-        activeKeys.keys.filter { it !in now }.forEach { activeKeys.remove(it); dismissedCritical.remove(it) }
+        activeKeys.keys.filter { it !in now }.forEach { activeKeys.remove(it) }
+        // depois de 10 minutos, um alerta grave dispensado pode voltar a aparecer
+        dismissedCritical.removeAll { k -> lastLogged[k]?.let { nowTs - it.first >= REPEAT_MS } ?: true }
     }
 
     fun dismissPopup() {
@@ -243,7 +271,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(scanning = true) }
         try {
             val r = c.readDtcs()
-            db.addScan(r.milOn, r.stored, r.pending)
+            if (!_ui.value.isDemo) db.addScan(r.milOn, r.stored, r.pending)
             _ui.update { it.copy(stored = r.stored.map(DtcDatabase::lookup), pending = r.pending.map(DtcDatabase::lookup),
                 milOn = r.milOn, lastScanTs = System.currentTimeMillis(), scanning = false) }
             refreshHistory()
@@ -266,7 +294,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Viagens / histórico ----------
 
     private fun beginTrip() {
-        stats = TripStats(); sampleCount = 0; lastSampleSaved = 0
+        stats = TripStats(); sampleCount = 0; lastSampleSaved = 0; lastSummarySaved = 0; lastLogged.clear()
         val now = System.currentTimeMillis()
         tripId = db.startTrip(now)
         _ui.update { it.copy(tripStartTs = now) }
@@ -293,6 +321,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun samples(tripId: Long) = db.samples(tripId)
     fun tripEvents(tripId: Long) = db.events(tripId)
 
+    fun exportTechLog() = export { exporter.techLog(TechLog.dump()) }
     fun exportPdf() = export { exporter.reportPdf(_ui.value.vehicle) }
     fun exportCsv() = export { exporter.summaryCsv() }
     fun exportTrip(t: Trip) = export { exporter.tripCsv(t) }

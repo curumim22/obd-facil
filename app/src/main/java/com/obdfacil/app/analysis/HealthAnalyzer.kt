@@ -19,6 +19,8 @@ object HealthAnalyzer {
     const val COOLANT_CRIT = 110
 
     const val TRIM_LIMIT = 20.0
+    /** Depois que o alerta aparece, só some quando a correção cai abaixo disto (evita liga/desliga). */
+    const val TRIM_RELEASE = 15.0
     const val TRIM_SUSTAIN_MS = 30_000L
     const val WARM_ENGINE_C = 75
 
@@ -26,10 +28,10 @@ object HealthAnalyzer {
     fun trimReliable(d: LiveData) =
         d.longTrimPct != null && d.engineRunning && (d.coolantC ?: 0) >= WARM_ENGINE_C
 
-    fun trimOutOfRange(d: LiveData) =
-        trimReliable(d) && kotlin.math.abs((d.shortTrimPct ?: 0.0) + (d.longTrimPct ?: 0.0)) >= TRIM_LIMIT
+    fun trimOutOfRange(d: LiveData, limit: Double = TRIM_LIMIT) =
+        trimReliable(d) && kotlin.math.abs((d.shortTrimPct ?: 0.0) + (d.longTrimPct ?: 0.0)) >= limit
 
-    fun analyze(d: LiveData, dtcs: List<DtcInfo>, trimHighForMs: Long = 0): List<Alert> {
+    fun analyze(d: LiveData, dtcs: List<DtcInfo>, trimHighForMs: Long = 0, trimLimit: Double = TRIM_LIMIT): List<Alert> {
         val out = mutableListOf<Alert>()
 
         d.coolantC?.let { t ->
@@ -75,10 +77,10 @@ object HealthAnalyzer {
         // e só avisa se ficar alta por um tempo (trimHighForMs), para não alarmar com picos.
         val totalTrim = (d.shortTrimPct ?: 0.0) + (d.longTrimPct ?: 0.0)
         if (trimReliable(d) && trimHighForMs >= TRIM_SUSTAIN_MS) when {
-            totalTrim >= TRIM_LIMIT -> out += Alert("trim", Level.WARNING, "Mistura pobre (correção de ${"%.0f".format(totalTrim)}%)",
+            totalTrim >= trimLimit -> out += Alert("trim", Level.WARNING, "Mistura pobre (correção de ${"%.0f".format(totalTrim)}%)",
                 "Com o motor quente, a central está colocando bem mais combustível que o normal para compensar. Pode ser entrada falsa de ar, bomba fraca, filtro entupido ou bico sujo.",
                 "Trocou de combustível há pouco? Num flex, a central leva alguns quilômetros para se adaptar: rode um pouco e confira de novo. Se continuar, peça para verificar mangueiras de vácuo, filtro e pressão de combustível.")
-            totalTrim <= -TRIM_LIMIT -> out += Alert("trim", Level.WARNING, "Mistura rica (correção de ${"%.0f".format(totalTrim)}%)",
+            totalTrim <= -trimLimit -> out += Alert("trim", Level.WARNING, "Mistura rica (correção de ${"%.0f".format(totalTrim)}%)",
                 "Com o motor quente, a central está cortando combustível para compensar excesso. Pode ser bico pingando ou sensor com defeito.",
                 "Trocou de combustível há pouco? Rode um pouco e confira de novo. Se continuar, leve para limpeza e teste de bicos.")
             else -> {}

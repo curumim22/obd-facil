@@ -47,7 +47,7 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
         f.bufferedWriter(Charsets.UTF_8).use { w ->
             w.write("﻿")
             w.write("VIAGENS\nInício;Duração (min);Distância (km);Vel. média (km/h);Vel. máx (km/h);RPM máx;Temp. máx (°C);Bateria mín (V);Bateria máx (V);Alertas\n")
-            db.trips().forEach { t ->
+            db.trips().filter { it.endTs != null }.forEach { t ->
                 w.write(listOf(stamp.format(Date(t.startTs)), num(t.durationMin), "%.1f".format(t.distanceKm),
                     "%.0f".format(t.avgSpeed), num(t.maxSpeed), num(t.maxRpm), num(t.maxCoolant),
                     num(t.minVoltage), num(t.maxVoltage), num(t.alerts)).joinToString(";") + "\n")
@@ -131,12 +131,13 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
 
         y += 6f
         line("Últimas viagens", h2, 8f)
-        val trips = db.trips().take(15)
+        val trips = db.trips().filter { it.endTs != null }.take(15)
         if (trips.isEmpty()) line("Nenhuma viagem registrada.", body)
         trips.forEach { t ->
-            line("${stamp.format(Date(t.startTs))} · ${t.durationMin} min · ${"%.1f".format(t.distanceKm)} km · " +
-                "máx ${t.maxSpeed} km/h · ${t.maxRpm} rpm · temp. máx ${t.maxCoolant ?: "-"} °C · " +
-                "bateria ${t.minVoltage ?: "-"}–${t.maxVoltage ?: "-"} V · ${t.alerts} alerta(s)", body, 5f)
+            val temp = t.maxCoolant?.let { "temp. máx $it °C" } ?: "temp. sem leitura"
+            val bat = if (t.minVoltage == null) "bateria sem leitura" else "bateria ${num(t.minVoltage)} a ${num(t.maxVoltage)} V"
+            line("${stamp.format(Date(t.startTs))} · ${t.durationMin} min · ${"%.1f".format(t.distanceKm).replace('.', ',')} km · " +
+                "máx ${t.maxSpeed} km/h · ${t.maxRpm} rpm · $temp · $bat · ${t.alerts} alerta(s)", body, 5f)
         }
 
         val events = db.events().take(20)
@@ -152,9 +153,12 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
         return f
     }
 
+    fun techLog(text: String): File =
+        File(dir(), "registro_tecnico_${fileStamp.format(Date())}.txt").apply { writeText(text) }
+
     fun share(file: File) {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
-        val mime = if (file.extension == "pdf") "application/pdf" else "text/csv"
+        val mime = when (file.extension) { "pdf" -> "application/pdf"; "txt" -> "text/plain"; else -> "text/csv" }
         val send = Intent(Intent.ACTION_SEND).apply {
             type = mime
             putExtra(Intent.EXTRA_STREAM, uri)

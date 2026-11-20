@@ -89,13 +89,23 @@ fun SettingsScreen(s: UiState, vm: MainViewModel) {
         }
 
         item {
+            SectionTitle("Suporte")
+            OutlinedButton(onClick = { vm.exportTechLog() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Text("Exportar registro técnico")
+            }
+            Text("Arquivo com a conversa entre o app e o carro na última conexão. Envie para quem está ajudando a corrigir o app, se algum dado não aparecer.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp))
+        }
+
+        item {
             SectionTitle("Dados")
             OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Text("Apagar todo o histórico", color = Palette.Bad)
             }
         }
         item {
-            Text("OBD Fácil 1.0 · Este app ajuda a entender o carro, mas não substitui um mecânico.",
+            Text("OBD Fácil ${com.obdfacil.app.BuildConfig.VERSION_NAME} · Este app ajuda a entender o carro, mas não substitui um mecânico.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 16.dp))
         }

@@ -66,7 +66,9 @@ class ObdClient(private val transport: ObdTransport) {
     data class DtcResult(val stored: List<String>, val pending: List<String>, val milOn: Boolean?)
 
     suspend fun readDtcs(): DtcResult = lock.withLock {
-        val status = ObdParser.parseMode01("01", transport.send("0101"), 4)
+        // Status da luz da injeção; carros K-Line às vezes não respondem na primeira
+        val status = ObdParser.parseMode01("01", transport.send("0101", 6000), 4)
+            ?: run { delay(300); ObdParser.parseMode01("01", transport.send("0101", 6000), 4) }
         val stored = ObdParser.parseDtcs(transport.send("03", 6000), isCan, "43")
         val pending = ObdParser.parseDtcs(transport.send("07", 6000), isCan, "47").filterNot { it in stored }
         DtcResult(stored, pending, status?.let { (it[0] and 0x80) != 0 })

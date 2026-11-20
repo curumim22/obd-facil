@@ -73,6 +73,12 @@ class ObdParserTest {
         assertEquals(Level.WARNING, HealthAnalyzer.overall(HealthAnalyzer.analyze(warm, emptyList(), 31_000)))
     }
 
+    @Test fun trimHysteresis() {
+        val warm = LiveData(rpm = 900, coolantC = 88, shortTrimPct = 2.0, longTrimPct = 15.0) // 17 %
+        assertTrue(HealthAnalyzer.analyze(warm, emptyList(), 60_000).none { it.key == "trim" })
+        assertTrue(HealthAnalyzer.analyze(warm, emptyList(), 60_000, HealthAnalyzer.TRIM_RELEASE).any { it.key == "trim" })
+    }
+
     @Test fun misfireIsCritical() {
         val alerts = HealthAnalyzer.analyze(LiveData(), listOf(DtcDatabase.lookup("P0301")))
         assertEquals(Level.CRITICAL, HealthAnalyzer.overall(alerts))
