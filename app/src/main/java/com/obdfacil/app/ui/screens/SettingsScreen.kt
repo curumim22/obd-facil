@@ -1,0 +1,130 @@
+package com.obdfacil.app.ui.screens
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.obdfacil.app.ConnState
+import com.obdfacil.app.MainViewModel
+import com.obdfacil.app.UiState
+import com.obdfacil.app.ui.components.AppCard
+import com.obdfacil.app.ui.components.SectionTitle
+import com.obdfacil.app.ui.theme.Palette
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(s: UiState, vm: MainViewModel) {
+    var vehicle by remember(s.vehicle) { mutableStateOf(s.vehicle) }
+    var confirmClear by remember { mutableStateOf(false) }
+
+    LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Spacer(Modifier.height(4.dp)); Text("Ajustes", style = MaterialTheme.typography.headlineSmall) }
+
+        item {
+            SectionTitle("Veículo")
+            OutlinedTextField(vehicle, { vehicle = it; vm.setVehicle(it) }, Modifier.fillMaxWidth(),
+                label = { Text("Nome do carro (aparece no relatório)") }, singleLine = true)
+        }
+
+        item {
+            SectionTitle("Aparência")
+            val options = listOf("Automático", "Escuro", "Claro")
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                options.forEachIndexed { i, label ->
+                    SegmentedButton(selected = s.themeMode == i, onClick = { vm.setTheme(i) },
+                        shape = SegmentedButtonDefaults.itemShape(i, options.size)) { Text(label) }
+                }
+            }
+        }
+
+        if (s.conn == ConnState.CONNECTED) item {
+            SectionTitle("Conexão")
+            OutlinedButton(onClick = { vm.disconnect() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Desconectar do carro") }
+        }
+
+        if (s.isDemo && s.conn == ConnState.CONNECTED) item {
+            SectionTitle("Modo demonstração")
+            AppCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Toggle("Simular superaquecimento", "Para ver como é o alerta grave", s.demoOverheat) { vm.setDemoOverheat(it) }
+                    Toggle("Simular bateria fraca", "Para ver o alerta de bateria", s.demoLowBattery) { vm.setDemoLowBattery(it) }
+                }
+            }
+        }
+
+        item {
+            SectionTitle("Ajuda")
+            AppCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Help("O app não encontra o adaptador", "Pareie primeiro em Configurações > Bluetooth do celular. A senha costuma ser 1234 ou 0000.")
+                    Help("Conecta, mas o carro não responde", "Ligue a ignição. Carros de 2007 a 2009 às vezes demoram para responder na primeira vez: tente de novo.")
+                    Help("Alguns valores aparecem como --", "O seu carro não informa esse dado. É normal em carros mais antigos.")
+                    Help("Bateria", "O app mede a tensão direto na tomada OBD, que vem da bateria.")
+                    Help("Mantenha a tela ligada", "Enquanto conectado, a tela fica acesa para gravar a viagem. Use um suporte de celular.")
+                }
+            }
+        }
+
+        item {
+            SectionTitle("Dados")
+            OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Text("Apagar todo o histórico", color = Palette.Bad)
+            }
+        }
+        item {
+            Text("OBD Fácil 1.0 · Este app ajuda a entender o carro, mas não substitui um mecânico.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 16.dp))
+        }
+    }
+
+    if (confirmClear) AlertDialog(
+        onDismissRequest = { confirmClear = false },
+        title = { Text("Apagar todo o histórico?") },
+        text = { Text("Todas as viagens, alertas e leituras de falhas serão apagados. Se quiser guardar, exporte antes na aba Histórico. Não dá para desfazer.") },
+        confirmButton = { TextButton(onClick = { confirmClear = false; vm.clearHistory() }) { Text("Apagar tudo") } },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancelar") } },
+    )
+}
+
+@Composable
+private fun Toggle(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked, onChange)
+    }
+}
+
+@Composable
+private fun Help(q: String, a: String) {
+    Column {
+        Text(q, style = MaterialTheme.typography.titleMedium)
+        Text(a, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
