@@ -32,6 +32,7 @@ object HealthAnalyzer {
                 d.engineRunning && t < 60 -> out += Alert("cold", Level.INFO, "Motor ainda frio",
                     "O motor está aquecendo. Isso é normal nos primeiros minutos.",
                     "Evite acelerar forte e rotações altas até passar de 70 °C.")
+                else -> {}
             }
         }
 
@@ -47,6 +48,7 @@ object HealthAnalyzer {
                 v < 12.9 -> out += Alert("volt", Level.WARNING, "Carga da bateria baixa: $v V",
                     "Com o motor ligado o normal é de 13,5 a 14,5 V. O alternador ou a correia podem estar com problema.",
                     "Peça para testarem o alternador e a correia na próxima parada.")
+                else -> {}
             } else when {
                 v < 11.6 -> out += Alert("volt", Level.CRITICAL, "Bateria muito fraca: $v V",
                     "Com essa carga o carro pode não dar partida.",
@@ -54,6 +56,7 @@ object HealthAnalyzer {
                 v < 12.2 -> out += Alert("volt", Level.WARNING, "Bateria fraca: $v V",
                     "Com o motor desligado o normal é 12,4 V ou mais.",
                     "Teste a bateria. Se ela tiver mais de 3 anos, pode estar no fim da vida.")
+                else -> {}
             }
         }
 
@@ -65,6 +68,7 @@ object HealthAnalyzer {
             totalTrim <= -20 -> out += Alert("trim", Level.WARNING, "Mistura rica (correção de ${"%.0f".format(totalTrim)}%)",
                 "A central está cortando combustível para compensar excesso. Pode ser bico pingando ou sensor com defeito.",
                 "Leve para uma limpeza e teste de bicos.")
+            else -> {}
         }
 
         d.rpm?.let { if (it > 6000) out += Alert("rpm", Level.WARNING, "Rotação muito alta: $it rpm",

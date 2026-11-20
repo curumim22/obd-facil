@@ -222,7 +222,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun vibrate(short: Boolean = false) {
         val v: Vibrator? = if (Build.VERSION.SDK_INT >= 31)
             ctx.getSystemService(VibratorManager::class.java)?.defaultVibrator
-        else @Suppress("DEPRECATION") ctx.getSystemService(Vibrator::class.java)
+        else ctx.getSystemService(Vibrator::class.java)
         val effect = if (short) VibrationEffect.createOneShot(250, VibrationEffect.DEFAULT_AMPLITUDE)
         else VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 800), -1)
         runCatching { v?.vibrate(effect) }
