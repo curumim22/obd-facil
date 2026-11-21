@@ -64,11 +64,12 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
                     w.write("${stamp.format(Date(s.ts))};$mil;$c;${info.title};${info.severity.label};$type\n")
                 }
             }
-            w.write("\nABASTECIMENTOS\nData/Hora;Litros;Valor (R$);Preço/L (R$);Combustível;Tanque cheio;Consumo real (km/l)\n")
+            w.write("\nABASTECIMENTOS\nData/Hora;Litros;Valor (R$);Preço/L (R$);Combustível;Tanque cheio;Consumo real (km/l);Quilometragem\n")
             db.refuels().forEach { r ->
                 w.write(listOf(stamp.format(Date(r.ts)), "%.2f".format(r.liters).replace('.', ','),
                     r.total?.let { "%.2f".format(it).replace('.', ',') } ?: "", r.pricePerL?.let { "%.2f".format(it).replace('.', ',') } ?: "",
-                    r.fuel, if (r.full) "Sim" else "Não", r.realKmPerL?.let { "%.1f".format(it).replace('.', ',') } ?: ""
+                    r.fuel, if (r.full) "Sim" else "Não", r.realKmPerL?.let { "%.1f".format(it).replace('.', ',') } ?: "",
+                    r.odometer?.let { "%.0f".format(it) } ?: ""
                 ).joinToString(";") + "\n")
             }
             w.write("\nALERTAS\nData/Hora;Nível;Alerta\n")

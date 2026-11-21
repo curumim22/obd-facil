@@ -33,7 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.obdfacil.app.MainViewModel
+import com.obdfacil.app.CarSession
 import com.obdfacil.app.UiState
 import com.obdfacil.app.analysis.DtcDatabase
 import com.obdfacil.app.analysis.HealthAnalyzer
@@ -55,7 +55,7 @@ import java.util.Locale
 private val dayFmt = SimpleDateFormat("EEE, dd/MM 'às' HH:mm", Locale("pt", "BR"))
 
 @Composable
-fun HistoryScreen(s: UiState, vm: MainViewModel) {
+fun HistoryScreen(s: UiState, vm: CarSession) {
     var openTrip by remember { mutableStateOf<Trip?>(null) }
     openTrip?.let { t -> TripDetail(t, vm, onBack = { openTrip = null }); return }
 
@@ -102,6 +102,8 @@ fun HistoryScreen(s: UiState, vm: MainViewModel) {
                             Text("${br(r.liters)} L de ${r.fuel.lowercase()}" + (r.total?.let { " · R$ ${br(it, 2)}" } ?: "") +
                                 (r.pricePerL?.let { " (R$ ${br(it, 2)}/L)" } ?: ""),
                                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            r.odometer?.let { Text("Quilometragem: ${com.obdfacil.app.ui.components.brKm(it)} km",
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             r.realKmPerL?.let { Text("Consumo real do tanque: ${br(it)} km/l",
                                 style = MaterialTheme.typography.bodyLarge, color = Palette.Good) }
                         }
@@ -155,7 +157,7 @@ private fun TripCard(t: Trip, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TripDetail(t: Trip, vm: MainViewModel, onBack: () -> Unit) {
+private fun TripDetail(t: Trip, vm: CarSession, onBack: () -> Unit) {
     var samples by remember { mutableStateOf<List<LiveData>>(emptyList()) }
     var events by remember { mutableStateOf<List<EventRow>>(emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }

@@ -67,7 +67,7 @@ class ObdClient(private val transport: ObdTransport) {
         data
     }
 
-    data class DtcResult(val stored: List<String>, val pending: List<String>, val milOn: Boolean?)
+    data class DtcResult(val stored: List<String>, val pending: List<String>, val milOn: Boolean?, val milDistanceKm: Int? = null)
 
     suspend fun readDtcs(): DtcResult = lock.withLock {
         // Status da luz da injeção; carros K-Line às vezes não respondem na primeira
@@ -78,7 +78,10 @@ class ObdClient(private val transport: ObdTransport) {
             ?: throw IllegalStateException("O carro não respondeu. Ligue a ignição e tente de novo.")
         val stored = ObdParser.parseDtcs(transport.send("03", 6000), isCan, "43")
         val pending = ObdParser.parseDtcs(transport.send("07", 6000), isCan, "47").filterNot { it in stored }
-        DtcResult(stored, pending, status?.let { (it[0] and 0x80) != 0 })
+        // Distância rodada com a luz da injeção acesa (PID 21), se o carro informar
+        val dist = if (supports(Pid.DIST_MIL)) ObdParser.parseMode01("21", transport.send("0121", 4000), 2)
+            ?.let { it[0] * 256 + it[1] } else null
+        DtcResult(stored, pending, status?.let { (it[0] and 0x80) != 0 }, dist)
     }
 
     suspend fun clearDtcs(): Boolean = lock.withLock {

@@ -39,6 +39,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,7 +67,7 @@ import com.obdfacil.app.ui.theme.ObdTheme
 import com.obdfacil.app.ui.theme.Palette
 
 class MainActivity : ComponentActivity() {
-    private val vm: MainViewModel by viewModels()
+    private val vm: CarSession by lazy { (application as ObdApp).session }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,29 +76,36 @@ class MainActivity : ComponentActivity() {
             val s by vm.ui.collectAsStateWithLifecycle()
             val dark = when (s.themeMode) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
 
-            // Tela sempre acesa enquanto conectado (para gravar a viagem)
-            LaunchedEffect(s.conn) {
-                if (s.conn == ConnState.CONNECTED) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Tela acesa enquanto conectado (opcional: o app também funciona com a tela apagada)
+            LaunchedEffect(s.conn, s.keepScreenOn) {
+                if (s.conn == ConnState.CONNECTED && s.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
 
             ObdTheme(dark) { App(s, vm) }
         }
     }
+
+    override fun onStart() { super.onStart(); vm.appVisible = true }
+    override fun onStop() { vm.appVisible = false; super.onStop() }
 }
 
 @Composable
-private fun App(s: UiState, vm: MainViewModel) {
+private fun App(s: UiState, vm: CarSession) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val snack = remember { SnackbarHostState() }
 
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.all { it }) vm.loadPairedDevices()
+        // A notificação é opcional; só o Bluetooth é obrigatório
+        if (granted[Manifest.permission.BLUETOOTH_CONNECT] != false) vm.loadPairedDevices()
         else vm.showError("Sem a permissão de Bluetooth o app não consegue falar com o adaptador.")
     }
     val requestBluetooth = {
-        if (Build.VERSION.SDK_INT >= 31) permLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT))
-        else vm.loadPairedDevices()
+        val perms = buildList {
+            if (Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (perms.isNotEmpty()) permLauncher.launch(perms.toTypedArray()) else vm.loadPairedDevices()
     }
 
     LaunchedEffect(s.toast) { s.toast?.let { snack.showSnackbar(it); vm.consumeToast() } }
@@ -103,6 +113,17 @@ private fun App(s: UiState, vm: MainViewModel) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snack) },
+        topBar = {
+            // Faixa fixa: impossível confundir dados simulados com o carro de verdade
+            if (s.isDemo && s.conn != ConnState.DISCONNECTED) {
+                Row(Modifier.fillMaxWidth().background(Palette.Info).statusBarsPadding()
+                    .padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("MODO DEMONSTRAÇÃO · dados simulados", color = Color(0xFF06223F),
+                        style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.disconnect() }) { Text("Sair", color = Color(0xFF06223F), fontWeight = FontWeight.Bold) }
+                }
+            }
+        },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 NavigationBarItem(tab == 0, { tab = 0 }, icon = { Icon(Icons.Rounded.Speed, null) }, label = { Text("Painel") })

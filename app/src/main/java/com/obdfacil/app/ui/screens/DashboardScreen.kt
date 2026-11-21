@@ -33,7 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.obdfacil.app.ConnState
-import com.obdfacil.app.MainViewModel
+import com.obdfacil.app.CarSession
 import com.obdfacil.app.UiState
 import com.obdfacil.app.analysis.HealthAnalyzer
 import com.obdfacil.app.analysis.Level
@@ -42,25 +42,41 @@ import com.obdfacil.app.ui.components.AppCard
 import com.obdfacil.app.ui.components.ArcGauge
 import com.obdfacil.app.ui.components.BigNumber
 import com.obdfacil.app.ui.components.DetailRow
+import com.obdfacil.app.analysis.FuelType
+import com.obdfacil.app.ui.components.FuelActions
 import com.obdfacil.app.ui.components.FuelCard
+import com.obdfacil.app.ui.components.FuelCompareDialog
+import com.obdfacil.app.ui.components.InfoLine
 import com.obdfacil.app.ui.components.RefuelDialog
 import com.obdfacil.app.ui.components.SectionTitle
 import com.obdfacil.app.ui.components.StatusHero
 import com.obdfacil.app.ui.theme.Palette
 
 @Composable
-fun DashboardScreen(s: UiState, vm: MainViewModel, onRequestBluetooth: () -> Unit) {
+fun DashboardScreen(s: UiState, vm: CarSession, onRequestBluetooth: () -> Unit) {
     var showRefuel by rememberSaveable { mutableStateOf(false) }
+    var showCompare by rememberSaveable { mutableStateOf(false) }
+    val fuelActions = FuelActions(onRefuel = { showRefuel = true }, onCompare = { showCompare = true })
     when (s.conn) {
-        ConnState.DISCONNECTED -> ConnectPanel(s, vm, onRequestBluetooth) { showRefuel = true }
+        ConnState.DISCONNECTED -> ConnectPanel(s, vm, onRequestBluetooth, fuelActions)
         ConnState.CONNECTING -> Connecting(s)
-        ConnState.CONNECTED -> LivePanel(s) { showRefuel = true }
+        ConnState.CONNECTED -> LivePanel(s, fuelActions)
     }
+    if (showCompare) FuelCompareDialog(
+        lastEthanol = vm.lastPrice(FuelType.ETANOL),
+        lastGasoline = vm.lastPrice(FuelType.GASOLINA),
+        refuels = s.fuel.refuels,
+        estimatedKmL = s.fuel.refKmL,
+        currentFuel = s.fuel.fuelType,
+        onDismiss = { showCompare = false },
+    )
     if (showRefuel) RefuelDialog(
         tankKnown = s.fuel.tankL != null,
         capacityL = s.fuel.capacityL,
+        currentFuel = s.fuel.fuelType,
+        estimatedOdometer = s.estimatedOdometer,
         onDismiss = { showRefuel = false },
-        onSave = { l, p, t, full, level -> showRefuel = false; vm.refuel(l, p, t, full, level) },
+        onSave = { r -> showRefuel = false; vm.refuel(r.liters, r.pricePerL, r.total, r.full, r.levelBefore, r.odometer, r.fuel) },
     )
 }
 
@@ -78,7 +94,7 @@ private fun Connecting(s: UiState) {
 }
 
 @Composable
-private fun ConnectPanel(s: UiState, vm: MainViewModel, onRequestBluetooth: () -> Unit, onRefuel: () -> Unit) {
+private fun ConnectPanel(s: UiState, vm: CarSession, onRequestBluetooth: () -> Unit, fuel: FuelActions) {
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Spacer(Modifier.height(8.dp))
@@ -122,7 +138,7 @@ private fun ConnectPanel(s: UiState, vm: MainViewModel, onRequestBluetooth: () -
                 }
             }
         }
-        item { FuelCard(s.fuel, connected = false, onRefuel = onRefuel) }
+        item { FuelCard(s.fuel, connected = false, odometer = s.estimatedOdometer, actions = fuel) }
         item {
             OutlinedButton(onClick = { vm.connectDemo() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Icon(Icons.Rounded.PlayCircle, null); Spacer(Modifier.width(8.dp))
@@ -143,7 +159,7 @@ private fun Step(n: Int, text: String) {
 }
 
 @Composable
-private fun LivePanel(s: UiState, onRefuel: () -> Unit) {
+private fun LivePanel(s: UiState, fuel: FuelActions) {
     val d = s.live
     var showDetails by rememberSaveable { mutableStateOf(false) }
     val running = d.engineRunning
@@ -156,9 +172,14 @@ private fun LivePanel(s: UiState, onRefuel: () -> Unit) {
     }
 
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Spacer(Modifier.height(4.dp)); StatusHero(s.overall, heroTitle, heroSub) }
+        item {
+            Spacer(Modifier.height(4.dp))
+            StatusHero(s.overall, heroTitle, heroSub, extra = if (d.milOn == true) "Luz da injeção acesa" else null)
+        }
 
-        s.alerts.forEach { a -> item(key = "a_" + a.key) { AlertCard(a) } }
+        // Avisos de atenção/graves em cartões compactos; informativos numa linha discreta
+        s.alerts.filter { it.level >= Level.WARNING }.forEach { a -> item(key = "a_" + a.key) { AlertCard(a) } }
+        s.alerts.filter { it.level == Level.INFO }.forEach { a -> item(key = "i_" + a.key) { InfoLine(a) } }
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -177,7 +198,7 @@ private fun LivePanel(s: UiState, onRefuel: () -> Unit) {
                     t < HealthAnalyzer.COOLANT_CRIT -> "Esquentando demais"
                     else -> "PERIGO"
                 }
-                ArcGauge(t?.toFloat(), 40f, 130f, "Temperatura do motor", t?.toString() ?: "--", "°C", tLevel,
+                ArcGauge(t?.toFloat(), 40f, 130f, "Motor", t?.toString() ?: "--", "°C", tLevel,
                     listOf(70f..HealthAnalyzer.COOLANT_WARN.toFloat() to Palette.Good,
                         HealthAnalyzer.COOLANT_WARN.toFloat()..HealthAnalyzer.COOLANT_CRIT.toFloat() to Palette.Warn,
                         HealthAnalyzer.COOLANT_CRIT.toFloat()..130f to Palette.Bad),
@@ -210,7 +231,7 @@ private fun LivePanel(s: UiState, onRefuel: () -> Unit) {
             }
         }
 
-        item { FuelCard(s.fuel, connected = true, onRefuel = onRefuel) }
+        item { FuelCard(s.fuel, connected = true, odometer = s.estimatedOdometer, actions = fuel) }
 
         item {
             AppCard(Modifier.fillMaxWidth()) {
@@ -237,7 +258,7 @@ private fun LivePanel(s: UiState, onRefuel: () -> Unit) {
                             else "Motor ainda frio: este valor só vale acima de ${HealthAnalyzer.WARM_ENGINE_C} °C",
                             d.longTrimPct?.let { "%+.0f%%".format(trim) } ?: "--",
                             d.longTrimPct?.let { if (!reliable) null else if (kotlin.math.abs(trim) >= HealthAnalyzer.TRIM_LIMIT) Level.WARNING else Level.OK })
-                        DetailRow("Pressão no coletor", "Vácuo do motor. Em marcha lenta: 25 a 40 kPa", d.mapKpa?.let { "$it kPa" } ?: "--", d.mapKpa?.let { Level.OK })
+                        DetailRow("Pressão no coletor", "Vácuo do motor. Parado: 25 a 40 kPa; sobe ao acelerar", d.mapKpa?.let { "$it kPa" } ?: "--", d.mapKpa?.let { Level.OK })
                         DetailRow("Avanço da ignição", "Momento da faísca, ajustado pela central", d.timingDeg?.let { "%.0f°".format(it) } ?: "--", d.timingDeg?.let { Level.OK })
                         DetailRow("Luz da injeção", "Luz de aviso do motor no painel",
                             when (d.milOn) { true -> "Acesa"; false -> "Apagada"; null -> "--" },

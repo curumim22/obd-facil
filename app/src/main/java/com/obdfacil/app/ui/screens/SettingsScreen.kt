@@ -17,6 +17,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.obdfacil.app.analysis.FuelType
 import com.obdfacil.app.ui.components.LEVELS
 import com.obdfacil.app.ui.components.br
+import com.obdfacil.app.ui.components.brKm
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -39,7 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.obdfacil.app.ConnState
-import com.obdfacil.app.MainViewModel
+import com.obdfacil.app.CarSession
 import com.obdfacil.app.UiState
 import com.obdfacil.app.ui.components.AppCard
 import com.obdfacil.app.ui.components.SectionTitle
@@ -47,7 +53,7 @@ import com.obdfacil.app.ui.theme.Palette
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(s: UiState, vm: MainViewModel) {
+fun SettingsScreen(s: UiState, vm: CarSession) {
     var vehicle by remember(s.vehicle) { mutableStateOf(s.vehicle) }
     var confirmClear by remember { mutableStateOf(false) }
 
@@ -98,8 +104,22 @@ fun SettingsScreen(s: UiState, vm: MainViewModel) {
                         }
                     }
 
+                    Text("Quilometragem do painel", style = MaterialTheme.typography.titleMedium)
+                    Text("Digite o número que aparece no painel. O app soma o que rodar conectado (o 206 não envia a quilometragem pela OBD).",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    var odo by remember { mutableStateOf("") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(odo, { odo = it }, label = { Text(s.estimatedOdometer?.let { "Atual ~${brKm(it)} km" } ?: "Km do painel") },
+                            singleLine = true, modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { odo.filter { it.isDigit() }.toDoubleOrNull()?.let { vm.setOdometer(it); odo = "" } }) {
+                            Text("Salvar")
+                        }
+                    }
+
                     Text("Calibrar com o seu consumo real", style = MaterialTheme.typography.titleMedium)
-                    Text("Se você sabe quanto o carro faz (ex.: R$ 100 de etanol rendem 250 km = 10 km/l), informe aqui para o cálculo ficar mais preciso. Também calibra sozinho a cada \"Completei o tanque\".",
+                    Text("Se você sabe quanto o carro faz (ex.: R$ 100 de etanol rendem 250 km = 10 km/l), informe aqui para o cálculo ficar mais preciso. O ideal é deixar o app calibrar sozinho: marque \"Completei o tanque\" (com a quilometragem) duas vezes seguidas.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     var real by remember { mutableStateOf("") }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -113,6 +133,42 @@ fun SettingsScreen(s: UiState, vm: MainViewModel) {
                     s.fuel.refKmL?.let {
                         Text("Média estimada das últimas viagens: ${br(it)} km/l", style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionTitle("Segundo plano")
+            val ctx = LocalContext.current
+            val pm = ctx.getSystemService(PowerManager::class.java)
+            var unrestricted by remember { mutableStateOf(pm.isIgnoringBatteryOptimizations(ctx.packageName)) }
+            AppCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Conectado, o app continua lendo o carro com a tela apagada ou com outro app aberto (aparece uma notificação). Alertas graves chegam como notificação com som.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Manter a tela acesa", style = MaterialTheme.typography.titleMedium)
+                            Text("Útil com o celular no suporte", style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(s.keepScreenOn, { vm.setKeepScreenOn(it) })
+                    }
+                    if (unrestricted) {
+                        Text("✓ Economia de bateria liberada para o app.", style = MaterialTheme.typography.bodyMedium, color = Palette.Good)
+                    } else {
+                        Text("Para o Android não fechar o app com a tela apagada, libere a economia de bateria:",
+                            style = MaterialTheme.typography.bodyMedium)
+                        OutlinedButton(onClick = {
+                            runCatching {
+                                ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:" + ctx.packageName)))
+                            }
+                            unrestricted = pm.isIgnoringBatteryOptimizations(ctx.packageName)
+                        }, modifier = Modifier.fillMaxWidth()) { Text("Liberar economia de bateria") }
+                        Text("No Samsung também vale: Configurações › Bateria › Limites de uso em segundo plano › Apps nunca suspensos › adicionar OBD Fácil.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -141,7 +197,7 @@ fun SettingsScreen(s: UiState, vm: MainViewModel) {
                     Help("Conecta, mas o carro não responde", "Ligue a ignição. Carros de 2007 a 2009 às vezes demoram para responder na primeira vez: tente de novo.")
                     Help("Alguns valores aparecem como --", "O seu carro não informa esse dado. É normal em carros mais antigos.")
                     Help("Bateria", "O app mede a tensão direto na tomada OBD, que vem da bateria.")
-                    Help("Mantenha a tela ligada", "Enquanto conectado, a tela fica acesa para gravar a viagem. Use um suporte de celular.")
+                    Help("Posso apagar a tela?", "Pode. Conectado, o app continua gravando em segundo plano. Veja a seção Segundo plano acima.")
                 }
             }
         }

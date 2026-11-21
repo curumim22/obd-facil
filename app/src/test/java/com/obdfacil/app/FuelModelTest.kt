@@ -46,3 +46,23 @@ class FuelModelTest {
         assertEquals(1.125, FuelModel.recalibrate(1.0, 25.0, 20.0), 1e-9)
     }
 }
+
+class FuelCompareTest {
+    @Test fun ethanolWinsBelow70Percent() {
+        val r = com.obdfacil.app.analysis.FuelCompare.compare(3.99, 6.20, 10.0, null)
+        assertTrue(r.ethanolWins)                       // 3,99 / 6,20 = 64%
+        assertEquals(4.34, r.breakEvenEthanolPrice, 0.01)
+        assertTrue(r.costPerKmEthanol!! < r.costPerKmGasoline!!)
+    }
+
+    @Test fun gasolineWinsAbove70Percent() {
+        val r = com.obdfacil.app.analysis.FuelCompare.compare(4.60, 6.20, 10.0, null)
+        assertTrue(!r.ethanolWins)
+    }
+
+    @Test fun usesOwnRatioWhenBothKnown() {
+        val r = com.obdfacil.app.analysis.FuelCompare.compare(4.40, 6.20, 10.0, 13.5) // 74%
+        assertTrue(r.ratioFromOwnData)
+        assertTrue(r.ethanolWins)                       // 71% < 74%
+    }
+}

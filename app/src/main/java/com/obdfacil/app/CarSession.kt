@@ -8,8 +8,8 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import com.obdfacil.app.analysis.Alert
 import com.obdfacil.app.analysis.DtcDatabase
 import com.obdfacil.app.analysis.DtcInfo
@@ -97,10 +97,22 @@ data class UiState(
     val toast: String? = null,
     val themeMode: Int = 0, // 0 = automático, 1 = escuro, 2 = claro
     val notice: String? = null,
+    val keepScreenOn: Boolean = true,
+    val milDistanceKm: Int? = null,
+    val estimatedOdometer: Double? = null,
     val fuel: FuelUi = FuelUi(),
 )
 
-class MainViewModel(app: Application) : AndroidViewModel(app) {
+/**
+ * Sessão com o carro. Vive enquanto o processo do app existir (não só enquanto a tela está aberta),
+ * para continuar lendo o carro em segundo plano, com a tela apagada.
+ */
+class CarSession(private val app: Application) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** A tela do app está visível? (para decidir se o alerta grave vira notificação) */
+    @Volatile var appVisible = false
 
     companion object {
         private const val REPEAT_MS = 10 * 60_000L
@@ -109,7 +121,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private class IgnitionOff : Exception()
 
-    private val ctx: Context get() = getApplication()
+    private val ctx: Context get() = app
     private val prefs = app.getSharedPreferences("obd", Context.MODE_PRIVATE)
     val db = HistoryDb(app)
     private val exporter = Exporter(app, db)
@@ -119,6 +131,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         savedDevice = prefs.getString("device", null),
         vehicle = prefs.getString("vehicle", null) ?: "Peugeot 206 1.4 Flex 2008",
         themeMode = prefs.getInt("theme", 1),
+        keepScreenOn = prefs.getBoolean("keep_screen", true),
     ))
     val ui: StateFlow<UiState> = _ui
 
@@ -145,7 +158,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         TechLog.init(app.filesDir)
         publishFuel()
-        viewModelScope.launch(Dispatchers.IO) { runCatching { db.repairOpenTrips() }; refreshHistory() }
+        scope.launch(Dispatchers.IO) { runCatching { db.repairOpenTrips() }; refreshHistory() }
     }
 
     // ---------- Bluetooth ----------
@@ -182,13 +195,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         disconnect()
         client = c
         _ui.update { it.copy(conn = ConnState.CONNECTING, connStep = "Conectando ao adaptador…", error = null, notice = null, isDemo = isDemo) }
-        loop = viewModelScope.launch(Dispatchers.IO) {
+        loop = scope.launch(Dispatchers.IO) {
             try {
                 _ui.update { it.copy(connStep = "Conversando com o carro… (pode levar até 15 segundos)") }
                 c.initialize()
                 TechLog.info = "OBD Fácil ${BuildConfig.VERSION_NAME} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n" +
                     "Veículo: ${_ui.value.vehicle}\nAdaptador: ${c.adapterVersion} · Protocolo: ${c.protocolName} (${c.protocolNumber})\n" +
                     "PIDs suportados: ${c.supported.sorted().joinToString(" ") { "%02X".format(it) }}"
+                if (!isDemo) ObdService.start(ctx)
                 _ui.update { it.copy(conn = ConnState.CONNECTED, protocol = c.protocolName, adapter = c.adapterVersion,
                     supportedCount = c.supported.size, connStep = "") }
                 throttleMin = null; throttleReadings = 0
@@ -200,18 +214,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: IgnitionOff) {
                 endTrip()
                 c.close()
+                ObdService.stop(ctx)
                 _ui.update { it.copy(conn = ConnState.DISCONNECTED, connStep = "", error = null,
                     notice = "Ignição desligada. A viagem foi salva no Histórico.",
                     live = LiveData(), recent = emptyList(), alerts = emptyList(), overall = Level.OK) }
             } catch (e: Exception) {
                 endTrip()
                 c.close()
+                ObdService.stop(ctx)
                 _ui.update { it.copy(conn = ConnState.DISCONNECTED, error = e.message ?: "Falha na conexão.", connStep = "") }
             }
         }
     }
 
     fun disconnect() {
+        ObdService.stop(ctx)
         loop?.cancel(); loop = null
         client?.close(); client = null
         endTrip()
@@ -318,7 +335,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             capacityL = tank.capacityL,
             fuelType = tank.fuelType,
             calibration = tank.calibration,
-        )) }
+        ), estimatedOdometer = tank.estimatedOdometer) }
     }
 
     /** Consumo médio estimado das últimas viagens (até ~300 km), usado para a autonomia. */
@@ -333,12 +350,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return if (km >= 5 && l > 0) km / l else null
     }
 
-    fun refuel(liters: Double, pricePerL: Double?, total: Double?, full: Boolean, levelBefore: Double?) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val r = tank.refuel(liters, full, levelBefore)
-            db.addRefuel(liters, pricePerL, total, full, tank.fuelType.label, r.realKmPerL)
+    fun refuel(liters: Double, pricePerL: Double?, total: Double?, full: Boolean, levelBefore: Double?,
+               odometer: Double? = null, fuelType: FuelType = tank.fuelType) {
+        scope.launch(Dispatchers.IO) {
+            tank.fuelType = fuelType
+            pricePerL?.let { prefs.edit().putFloat("price_${fuelType.name}", it.toFloat()).apply() }
+            val r = tank.refuel(liters, full, levelBefore, odometer, _ui.value.fuel.refKmL)
+            db.addRefuel(liters, pricePerL, total, full, fuelType.label, r.realKmPerL, odometer)
             val msg = when {
-                r.realKmPerL != null -> "Abastecimento salvo. Consumo real deste tanque: ${"%.1f".format(r.realKmPerL)} km/l. O cálculo foi ajustado."
+                r.realKmPerL != null && r.calibrated -> "Abastecimento salvo. Consumo real deste tanque: ${"%.1f".format(r.realKmPerL)} km/l. O cálculo foi ajustado."
+                r.realKmPerL != null -> "Abastecimento salvo. Consumo real deste tanque: ${"%.1f".format(r.realKmPerL)} km/l."
                 full -> "Abastecimento salvo. Tanque cheio: a partir de agora o app mede o consumo real."
                 else -> "Abastecimento salvo."
             }
@@ -347,7 +368,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteRefuel(id: Long) = viewModelScope.launch(Dispatchers.IO) { db.deleteRefuel(id); refreshHistory() }
+    fun deleteRefuel(id: Long) = scope.launch(Dispatchers.IO) { db.deleteRefuel(id); refreshHistory() }
+
+    fun setOdometer(km: Double) { tank.setOdometer(km); publishFuel(); _ui.update { it.copy(toast = "Quilometragem atualizada.") } }
+
+    /** Último preço pago por litro de cada combustível (para a comparação etanol x gasolina). */
+    fun lastPrice(f: FuelType): Double? = prefs.getFloat("price_${f.name}", -1f).takeIf { it > 0 }?.toDouble()
 
     fun setTankLevel(fraction: Double) { tank.setLevel(fraction); publishFuel() }
 
@@ -384,6 +410,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (a.level == Level.CRITICAL && key !in dismissedCritical) {
                     vibrate()
                     _ui.update { it.copy(popup = a) }
+                    if (!appVisible && !_ui.value.isDemo) ObdService.notifyCritical(ctx, a)
                 } else if (a.level == Level.WARNING) vibrate(short = true)
             }
             activeKeys[key] = a.level
@@ -411,7 +438,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun scanDtcs() {
         val c = client ?: return
-        viewModelScope.launch(Dispatchers.IO) { scanDtcsInternal(c) }
+        scope.launch(Dispatchers.IO) { scanDtcsInternal(c) }
     }
 
     private suspend fun scanDtcsInternal(c: ObdClient) {
@@ -420,7 +447,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val r = c.readDtcs()
             if (!_ui.value.isDemo) db.addScan(r.milOn, r.stored, r.pending)
             _ui.update { it.copy(stored = r.stored.map(DtcDatabase::lookup), pending = r.pending.map(DtcDatabase::lookup),
-                milOn = r.milOn, lastScanTs = System.currentTimeMillis(), scanning = false) }
+                milOn = r.milOn, milDistanceKm = r.milDistanceKm, lastScanTs = System.currentTimeMillis(), scanning = false) }
             refreshHistory()
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
@@ -430,7 +457,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearDtcs() {
         val c = client ?: return
-        viewModelScope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO) {
             val ok = runCatching { c.clearDtcs() }.getOrDefault(false)
             _ui.update { it.copy(toast = if (ok) "Códigos apagados. Se o problema continuar, eles voltam." else "O carro não aceitou apagar. Tente com o motor desligado e a ignição ligada.") }
             delay(800)
@@ -457,7 +484,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshHistory() {
-        viewModelScope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO) {
             val trips = db.trips().filter { it.endTs != null }
             val refKmL = referenceKmPerL(trips)
             _ui.update { it.copy(trips = trips, scans = db.scans(), events = db.events(),
@@ -465,9 +492,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteTrip(id: Long) = viewModelScope.launch(Dispatchers.IO) { db.deleteTrip(id); refreshHistory() }
+    fun deleteTrip(id: Long) = scope.launch(Dispatchers.IO) { db.deleteTrip(id); refreshHistory() }
 
-    fun clearHistory() = viewModelScope.launch(Dispatchers.IO) { db.clearAll(); tank.reset(); publishFuel(); refreshHistory() }
+    fun clearHistory() = scope.launch(Dispatchers.IO) { db.clearAll(); tank.reset(); publishFuel(); refreshHistory() }
 
     fun samples(tripId: Long) = db.samples(tripId)
     fun tripEvents(tripId: Long) = db.events(tripId)
@@ -478,7 +505,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun exportTrip(t: Trip) = export { exporter.tripCsv(t) }
 
     private fun export(block: () -> java.io.File) {
-        viewModelScope.launch {
+        scope.launch {
             val f = runCatching { withContext(Dispatchers.IO) { block() } }.getOrNull()
             if (f == null) _ui.update { it.copy(toast = "Não foi possível gerar o arquivo.") } else exporter.share(f)
         }
@@ -490,9 +517,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setDemoOverheat(on: Boolean) { demo?.simulateOverheat = on; _ui.update { it.copy(demoOverheat = on) } }
     fun setDemoLowBattery(on: Boolean) { demo?.simulateLowBattery = on; _ui.update { it.copy(demoLowBattery = on) } }
     fun setTheme(mode: Int) { prefs.edit().putInt("theme", mode).apply(); _ui.update { it.copy(themeMode = mode) } }
+    fun setKeepScreenOn(on: Boolean) { prefs.edit().putBoolean("keep_screen", on).apply(); _ui.update { it.copy(keepScreenOn = on) } }
     fun consumeToast() = _ui.update { it.copy(toast = null) }
     fun showError(msg: String) = _ui.update { it.copy(error = msg) }
     fun clearError() = _ui.update { it.copy(error = null) }
 
-    override fun onCleared() { disconnect(); super.onCleared() }
 }

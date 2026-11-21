@@ -38,7 +38,8 @@ enum class Pid(val code: String, val bytes: Int) {
     TIMING("0E", 1),
     INTAKE("0F", 1),
     THROTTLE("11", 1),
-    MODULE_VOLTAGE("42", 2);
+    MODULE_VOLTAGE("42", 2),
+    DIST_MIL("21", 2);
 
     val number: Int get() = code.toInt(16)
 }
@@ -58,6 +59,7 @@ object PidMath {
         Pid.INTAKE -> current.copy(intakeC = b[0] - 40)
         Pid.THROTTLE -> current.copy(throttlePct = Math.round(b[0] * 100 / 255.0).toInt())
         Pid.MODULE_VOLTAGE -> current.copy(voltage = round1(((b[0] * 256) + b[1]) / 1000.0))
+        Pid.DIST_MIL -> current // lido à parte, junto com os códigos de falha
     }
 
     private fun round1(v: Double) = Math.round(v * 10) / 10.0

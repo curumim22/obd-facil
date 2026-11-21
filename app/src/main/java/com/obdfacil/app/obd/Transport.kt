@@ -115,6 +115,7 @@ class DemoTransport : ObdTransport {
             cmd == "0140" -> "NO DATA\r"
             cmd == "0101" -> if (dtcsCleared) "410100076500\r" else "410182076500\r"
             cmd == "0103" -> if (speed > 5 && Math.sin(t / 3) > 0.85) "41030400\r" else "41030200\r"
+            cmd == "0121" -> if (dtcsCleared) "41210000\r" else "4121002A\r"
             cmd == "0104" -> "4104${hex((20 + speed * 0.7).toInt() * 255 / 100)}\r"
             cmd == "0105" -> "4105${hex(coolant.toInt() + 40)}\r"
             cmd == "0106" -> "4106${hex(128 + (Math.sin(t * 2) * 6).toInt())}\r"

@@ -31,10 +31,19 @@ class FuelTank(private val prefs: SharedPreferences) {
     private var kmSinceFull = prefs.getFloat("km_since_full", 0f).toDouble()
     private var addedSinceFull = prefs.getFloat("added_since_full", 0f).toDouble()
 
+    // Quilometragem do painel (o 206 não informa pela OBD; o usuário digita)
+    private var lastOdo: Double? = prefs.getFloat("last_odo", -1f).takeIf { it >= 0 }?.toDouble()
+    private var appKmSinceOdo = prefs.getFloat("app_km_since_odo", 0f).toDouble()
+    private var odoAtLastFull: Double? = prefs.getFloat("odo_at_full", -1f).takeIf { it >= 0 }?.toDouble()
+
+    /** Odômetro estimado: último valor informado + o que o app mediu desde então. */
+    val estimatedOdometer: Double? get() = lastOdo?.let { it + appKmSinceOdo }
+
     fun consume(liters: Double, km: Double) {
         if (liters <= 0 && km <= 0) return
         litersInTank = litersInTank?.let { (it - liters).coerceAtLeast(0.0) }
         if (hasFullRef) { estSinceFull += liters; kmSinceFull += km }
+        appKmSinceOdo += km
     }
 
     fun setLevel(fraction: Double) {
@@ -42,30 +51,60 @@ class FuelTank(private val prefs: SharedPreferences) {
         save()
     }
 
-    data class RefuelResult(val realKmPerL: Double?, val calibrated: Boolean)
+    data class RefuelResult(val realKmPerL: Double?, val calibrated: Boolean, val kmWithoutApp: Double = 0.0)
 
     /**
      * @param levelBefore nível antes de abastecer (0..1), quando o app ainda não sabe quanto havia.
+     * @param odometer quilometragem do painel, se informada.
+     * @param refKmPerL consumo médio de referência, para descontar o que foi rodado sem o app.
      */
-    fun refuel(liters: Double, full: Boolean, levelBefore: Double?): RefuelResult {
+    fun refuel(liters: Double, full: Boolean, levelBefore: Double?, odometer: Double? = null, refKmPerL: Double? = null): RefuelResult {
         levelBefore?.let { litersInTank = capacityL * it }
         var realKmPerL: Double? = null
         var calibrated = false
+        var kmWithoutApp = 0.0
+
+        // Com o odômetro, dá para saber quanto foi rodado sem o app e descontar do tanque
+        val prevOdo = lastOdo
+        if (odometer != null && prevOdo != null && odometer > prevOdo) {
+            kmWithoutApp = (odometer - prevOdo - appKmSinceOdo).coerceAtLeast(0.0)
+            if (kmWithoutApp > 2 && levelBefore == null && refKmPerL != null && refKmPerL > 0) {
+                litersInTank = litersInTank?.let { (it - kmWithoutApp / refKmPerL).coerceAtLeast(0.0) }
+            }
+        }
+
         if (full) {
-            if (hasFullRef && estSinceFull > 3 && kmSinceFull > 40) {
-                val realLiters = addedSinceFull + liters
+            val realLiters = addedSinceFull + liters
+            val odoKm = if (odometer != null) odoAtLastFull?.let { odometer - it }?.takeIf { it > 0 } else null
+            if (hasFullRef && odoKm != null && odoKm > 40) {
+                // Consumo real pelo painel: vale mesmo se parte foi rodada sem o app
+                realKmPerL = odoKm / realLiters
+                // Só calibra o cálculo se o app acompanhou quase tudo (90% dos km)
+                if (estSinceFull > 3 && kmSinceFull >= odoKm * 0.9) {
+                    calibration = FuelModel.recalibrate(calibration, realLiters * kmSinceFull / odoKm, estSinceFull)
+                    calibrated = true
+                }
+            } else if (hasFullRef && estSinceFull > 3 && kmSinceFull > 40) {
                 realKmPerL = kmSinceFull / realLiters
                 calibration = FuelModel.recalibrate(calibration, realLiters, estSinceFull)
                 calibrated = true
             }
             litersInTank = capacityL
             hasFullRef = true; estSinceFull = 0.0; kmSinceFull = 0.0; addedSinceFull = 0.0
+            odoAtLastFull = odometer
         } else {
             litersInTank = litersInTank?.let { (it + liters).coerceAtMost(capacityL) }
             if (hasFullRef) addedSinceFull += liters
         }
+        if (odometer != null) { lastOdo = odometer; appKmSinceOdo = 0.0 }
         save()
-        return RefuelResult(realKmPerL, calibrated)
+        return RefuelResult(realKmPerL, calibrated, kmWithoutApp)
+    }
+
+    /** O usuário corrige a quilometragem atual do painel. */
+    fun setOdometer(km: Double) {
+        lastOdo = km; appKmSinceOdo = 0.0
+        save()
     }
 
     /** Ajuste manual: o usuário informa o consumo real que conhece. */
@@ -76,6 +115,7 @@ class FuelTank(private val prefs: SharedPreferences) {
 
     fun reset() {
         litersInTank = null; hasFullRef = false; estSinceFull = 0.0; kmSinceFull = 0.0; addedSinceFull = 0.0
+        lastOdo = null; appKmSinceOdo = 0.0; odoAtLastFull = null
         calibration = 1.0
         save()
     }
@@ -87,6 +127,9 @@ class FuelTank(private val prefs: SharedPreferences) {
             .putFloat("est_since_full", estSinceFull.toFloat())
             .putFloat("km_since_full", kmSinceFull.toFloat())
             .putFloat("added_since_full", addedSinceFull.toFloat())
+            .putFloat("last_odo", lastOdo?.toFloat() ?: -1f)
+            .putFloat("app_km_since_odo", appKmSinceOdo.toFloat())
+            .putFloat("odo_at_full", odoAtLastFull?.toFloat() ?: -1f)
             .apply()
     }
 }

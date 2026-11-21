@@ -7,7 +7,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +25,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Warning
@@ -30,6 +36,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +51,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.obdfacil.app.analysis.Alert
 import com.obdfacil.app.analysis.Level
@@ -73,7 +84,7 @@ fun AppCard(modifier: Modifier = Modifier, borderColor: Color? = null, content: 
 
 /** Cartão grande do topo: o "semáforo" do carro. */
 @Composable
-fun StatusHero(level: Level, title: String, subtitle: String, modifier: Modifier = Modifier) {
+fun StatusHero(level: Level, title: String, subtitle: String, modifier: Modifier = Modifier, extra: String? = null) {
     val c by animateColorAsState(level.color(), tween(500), label = "hero")
     Box(
         modifier
@@ -91,34 +102,59 @@ fun StatusHero(level: Level, title: String, subtitle: String, modifier: Modifier
             Column {
                 Text(title, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                extra?.let { Spacer(Modifier.height(6.dp)); Pill(it, Palette.Warn) }
             }
         }
     }
 }
 
+/**
+ * Aviso compacto: título e uma linha. Toque para ver a explicação completa.
+ * Avisos graves já aparecem abertos.
+ */
 @Composable
 fun AlertCard(a: Alert, modifier: Modifier = Modifier) {
     val c = a.level.color()
+    var expanded by rememberSaveable(a.key) { mutableStateOf(a.level == Level.CRITICAL) }
     Box(
         modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
             .background(c.copy(alpha = if (a.level == Level.CRITICAL) 0.22f else 0.12f))
             .border(if (a.level == Level.CRITICAL) 2.dp else 1.dp, c.copy(alpha = 0.7f), RoundedCornerShape(20.dp))
-            .padding(16.dp)
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        Row {
-            Icon(a.level.icon(), null, tint = c, modifier = Modifier.size(28.dp))
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(a.level.icon(), null, tint = c, modifier = Modifier.size(24.dp).padding(top = 2.dp))
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text(a.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(Modifier.height(4.dp))
-                Text(a.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (a.action.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("O que fazer: " + a.action, style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                if (!expanded) {
+                    Text(a.message.lineSequence().first(), style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Spacer(Modifier.height(4.dp))
+                    Text(a.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (a.action.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("O que fazer: " + a.action, style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    }
                 }
             }
+            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (expanded) "Fechar" else "Ver mais",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/** Aviso informativo discreto (ex.: motor ainda frio): uma linha só. */
+@Composable
+fun InfoLine(a: Alert, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.Info, null, tint = Palette.Info, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("${a.title} · ${a.action}", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -143,33 +179,45 @@ fun ArcGauge(
     val track = MaterialTheme.colorScheme.surfaceVariant
     val col = if (value == null) MaterialTheme.colorScheme.onSurfaceVariant else level.color()
     AppCard(modifier, borderColor = if (level == Level.CRITICAL) Palette.Bad else null) {
-        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Box(Modifier.fillMaxWidth().aspectRatio(1.6f), contentAlignment = Alignment.BottomCenter) {
-                Canvas(Modifier.fillMaxWidth().aspectRatio(1.6f).padding(8.dp)) {
-                    val stroke = size.width * 0.075f
-                    val d = minOf(size.width, size.height * 1.6f) - stroke
-                    val topLeft = Offset((size.width - d) / 2, stroke / 2 + 4f)
-                    val arcSize = Size(d, d)
-                    val start = 160f; val sweep = 220f
-                    drawArc(track, start, sweep, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
-                    bands.forEach { (r, c) ->
-                        val s = ((r.start - min) / (max - min)).coerceIn(0f, 1f)
-                        val e = ((r.endInclusive - min) / (max - min)).coerceIn(0f, 1f)
-                        drawArc(c.copy(alpha = 0.35f), start + sweep * s, sweep * (e - s), false,
-                            Offset(topLeft.x + stroke * 0.8f, topLeft.y + stroke * 0.8f),
-                            Size(d - stroke * 1.6f, d - stroke * 1.6f), style = Stroke(stroke * 0.25f))
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1)
+            Spacer(Modifier.height(6.dp))
+            // Arco de 240°: o número fica no centro do círculo, sem encostar no arco
+            BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1.3f)) {
+                val w = maxWidth
+                val h = maxWidth / 1.3f
+                val strokeDp = w * 0.085f
+                val r = minOf((w - strokeDp) / 2, (h - strokeDp) / 1.5f)
+                val cy = strokeDp / 2 + r
+                Canvas(Modifier.fillMaxSize()) {
+                    val stroke = strokeDp.toPx()
+                    val radius = r.toPx()
+                    val topLeft = Offset(size.width / 2 - radius, stroke / 2)
+                    val arcSize = Size(radius * 2, radius * 2)
+                    val start = 150f; val sweep = 240f
+                    val style = Stroke(stroke, cap = StrokeCap.Butt)
+                    drawArc(track, start, sweep, false, topLeft, arcSize, style = style)
+                    // Faixas: verde = normal, amarelo = atenção, vermelho = perigo
+                    bands.forEach { (rg, c) ->
+                        val s0 = ((rg.start - min) / (max - min)).coerceIn(0f, 1f)
+                        val e0 = ((rg.endInclusive - min) / (max - min)).coerceIn(0f, 1f)
+                        drawArc(c.copy(alpha = 0.30f), start + sweep * s0, sweep * (e0 - s0), false, topLeft, arcSize, style = style)
                     }
-                    if (value != null) drawArc(col, start, sweep * frac.coerceIn(0f, 1f), false, topLeft, arcSize,
-                        style = Stroke(stroke, cap = StrokeCap.Round))
+                    if (value != null) {
+                        drawArc(col, start, (sweep * frac.coerceIn(0f, 1f)).coerceAtLeast(2f), false, topLeft, arcSize,
+                            style = Stroke(stroke * 0.55f, cap = StrokeCap.Round))
+                    }
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 6.dp)) {
-                    Text(valueText, style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.onSurface)
+                Column(Modifier.align(Alignment.TopCenter).offset(y = cy - 30.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(valueText, style = MaterialTheme.typography.displayMedium.copy(fontSize = 34.sp, lineHeight = 38.sp),
+                        color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
                     Text(unit, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Text(hint, style = MaterialTheme.typography.bodyMedium, color = col, textAlign = TextAlign.Center,
-                fontWeight = FontWeight.SemiBold)
+                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -202,7 +250,7 @@ fun DetailRow(name: String, explain: String, value: String, level: Level?) {
         Spacer(Modifier.width(12.dp))
         Text(value, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.width(8.dp))
-        Box(Modifier.size(10.dp).clip(CircleShape).background(level?.color() ?: MaterialTheme.colorScheme.surfaceVariant))
+        Box(Modifier.size(10.dp).clip(CircleShape).background(level?.color() ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)))
     }
 }
 

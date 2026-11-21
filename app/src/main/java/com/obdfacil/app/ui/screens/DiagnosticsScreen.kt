@@ -31,7 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.obdfacil.app.ConnState
-import com.obdfacil.app.MainViewModel
+import com.obdfacil.app.CarSession
 import com.obdfacil.app.UiState
 import com.obdfacil.app.analysis.DtcInfo
 import com.obdfacil.app.analysis.Level
@@ -48,7 +48,7 @@ import java.util.Locale
 fun Severity.color() = when (this) { Severity.CRITICAL -> Palette.Bad; Severity.HIGH -> Palette.Warn; Severity.LOW -> Palette.Info }
 
 @Composable
-fun DiagnosticsScreen(s: UiState, vm: MainViewModel) {
+fun DiagnosticsScreen(s: UiState, vm: CarSession) {
     var confirmClear by remember { mutableStateOf(false) }
     val connected = s.conn == ConnState.CONNECTED
     val all = s.stored + s.pending
@@ -77,6 +77,10 @@ fun DiagnosticsScreen(s: UiState, vm: MainViewModel) {
                 Spacer(Modifier.weight(1f))
                 s.lastScanTs?.let { Text("Lido em ${fmt.format(Date(it))}", style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            s.milDistanceKm?.takeIf { it > 0 }?.let {
+                Text("Rodados com a luz da injeção acesa: $it km", style = MaterialTheme.typography.bodyLarge,
+                    color = Palette.Warn, modifier = Modifier.padding(top = 6.dp))
             }
         }
         item {

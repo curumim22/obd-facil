@@ -35,6 +35,8 @@ data class Refuel(
     val full: Boolean, val fuel: String,
     /** Consumo real medido de tanque cheio a tanque cheio (km/l), quando foi possível calcular. */
     val realKmPerL: Double?,
+    /** Quilometragem do painel informada no abastecimento. */
+    val odometer: Double? = null,
 )
 
 data class ScanRow(val id: Long, val ts: Long, val milOn: Boolean?, val codes: List<String>, val pending: List<String>)
@@ -63,7 +65,7 @@ class TripStats {
     val avgSpeed get() = if (speedCount == 0) 0.0 else speedSum / speedCount
 }
 
-class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", null, 2) {
+class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE trips(id INTEGER PRIMARY KEY AUTOINCREMENT, start_ts INTEGER, end_ts INTEGER,
@@ -81,7 +83,7 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
 
     private fun createRefuels(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE IF NOT EXISTS refuels(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, liters REAL,
-            price_per_l REAL, total REAL, full INTEGER, fuel TEXT, real_kml REAL)""")
+            price_per_l REAL, total REAL, full INTEGER, fuel TEXT, real_kml REAL, odometer REAL)""")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -90,18 +92,20 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
             db.execSQL("ALTER TABLE samples ADD COLUMN fuel_lh REAL")
             createRefuels(db)
         }
+        if (oldVersion == 2) db.execSQL("ALTER TABLE refuels ADD COLUMN odometer REAL")
     }
 
-    fun addRefuel(liters: Double, pricePerL: Double?, total: Double?, full: Boolean, fuel: String, realKmPerL: Double?): Long =
+    fun addRefuel(liters: Double, pricePerL: Double?, total: Double?, full: Boolean, fuel: String, realKmPerL: Double?, odometer: Double? = null): Long =
         writableDatabase.insert("refuels", null, ContentValues().apply {
             put("ts", System.currentTimeMillis()); put("liters", liters)
             pricePerL?.let { put("price_per_l", it) }; total?.let { put("total", it) }
             put("full", if (full) 1 else 0); put("fuel", fuel); realKmPerL?.let { put("real_kml", it) }
+            odometer?.let { put("odometer", it) }
         })
 
     fun refuels(): List<Refuel> = readableDatabase.rawQuery("SELECT * FROM refuels ORDER BY ts DESC", null).use { c ->
         buildList { while (c.moveToNext()) add(Refuel(c.long("id"), c.long("ts"), c.double("liters"),
-            c.doubleOrNull("price_per_l"), c.doubleOrNull("total"), c.int("full") == 1, c.str("fuel"), c.doubleOrNull("real_kml"))) }
+            c.doubleOrNull("price_per_l"), c.doubleOrNull("total"), c.int("full") == 1, c.str("fuel"), c.doubleOrNull("real_kml"), c.doubleOrNull("odometer"))) }
     }
 
     fun deleteRefuel(id: Long) { writableDatabase.delete("refuels", "id=?", arrayOf(id.toString())) }
