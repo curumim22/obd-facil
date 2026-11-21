@@ -19,7 +19,29 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Chave de assinatura fixa. Criada uma única vez pelo próprio CI e protegida pela
+      # senha do segredo SIGNING_PASSWORD (Settings > Secrets and variables > Actions).
+      - name: Chave de assinatura fixa
+        env:
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$SIGNING_PASSWORD" ]; then
+            echo "::error::Falta o segredo SIGNING_PASSWORD (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          if [ ! -f app/obdfacil.keystore ]; then
+            keytool -genkeypair -keystore app/obdfacil.keystore -storetype PKCS12 -alias obdfacil \
+              -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=OBD Facil, C=BR" \
+              -storepass "$SIGNING_PASSWORD" -keypass "$SIGNING_PASSWORD"
+            git config user.name "ci"; git config user.email "ci@users.noreply.github.com"
+            git add app/obdfacil.keystore
+            git commit -m "Chave de assinatura fixa [skip ci]"
+            git push
+          fi
+
       - name: Testes e compilação
+        env:
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: |
           set -o pipefail
           echo "ANDROID_HOME=$ANDROID_HOME ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" | tee build.log
@@ -39,8 +61,8 @@ jobs:
       - name: Publicar versão para download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.${{ github.run_number }}
-          name: OBD Fácil v1.4.${{ github.run_number }}
+          tag_name: v1.5.${{ github.run_number }}
+          name: OBD Fácil v1.5.${{ github.run_number }}
           body: "Baixe o arquivo **OBD-Facil.apk** abaixo pelo celular e instale por cima da versão anterior."
           files: OBD-Facil.apk
 

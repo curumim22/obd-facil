@@ -76,5 +76,5 @@ class LoggingTransport(private val inner: ObdTransport) : ObdTransport {
         }
     }
 
-    override fun close() { TechLog.add("desconectado"); inner.close() }
+    override fun close() { TechLog.add("desconectado"); inner.close(); TechLog.save() }
 }

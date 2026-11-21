@@ -12,15 +12,31 @@ android {
         applicationId = "com.obdfacil.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
+    }
+
+    // Assinatura fixa: o mesmo certificado em toda compilação, para o Android aceitar
+    // instalar a versão nova por cima e manter o histórico. A senha vem do segredo
+    // SIGNING_PASSWORD do GitHub (ninguém mais a vê); a chave é criada pelo próprio CI.
+    val signingPassword: String? = System.getenv("SIGNING_PASSWORD")
+    val keystoreFile = file("obdfacil.keystore")
+    val hasFixedKey = !signingPassword.isNullOrEmpty() && keystoreFile.exists()
+    signingConfigs {
+        create("fixa") {
+            if (hasFixedKey) {
+                storeFile = keystoreFile
+                storePassword = signingPassword
+                keyAlias = "obdfacil"
+                keyPassword = signingPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Assinado com a chave de debug para poder instalar direto no celular
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (hasFixedKey) "fixa" else "debug")
         }
     }
     compileOptions {
