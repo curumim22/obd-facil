@@ -30,11 +30,12 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
         val f = File(dir(), "viagem_${fileStamp.format(Date(trip.startTs))}.csv")
         f.bufferedWriter(Charsets.UTF_8).use { w ->
             w.write("﻿") // BOM: acentos corretos no Excel
-            w.write("Data/Hora;RPM;Velocidade (km/h);Temp. motor (°C);Temp. ar (°C);Carga (%);Acelerador (%);Bateria (V);Ajuste curto (%);Ajuste longo (%);Pressão coletor (kPa)\n")
+            w.write("Data/Hora;RPM;Velocidade (km/h);Temp. motor (°C);Temp. ar (°C);Carga (%);Acelerador (%);Bateria (V);Ajuste curto (%);Ajuste longo (%);Pressão coletor (kPa);Consumo estimado (L/h)\n")
             db.samples(trip.id).forEach { s ->
                 w.write(listOf(stampSec.format(Date(s.timestamp)),
                     num(s.rpm), num(s.speedKmh), num(s.coolantC), num(s.intakeC), num(s.loadPct),
-                    num(s.throttlePct), num(s.voltage), num(s.shortTrimPct), num(s.longTrimPct), num(s.mapKpa)
+                    num(s.throttlePct), num(s.voltage), num(s.shortTrimPct), num(s.longTrimPct), num(s.mapKpa),
+                    s.fuelLh?.let { "%.2f".format(it).replace('.', ',') } ?: ""
                 ).joinToString(";") + "\n")
             }
         }
@@ -46,11 +47,13 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
         val f = File(dir(), "historico_${fileStamp.format(Date())}.csv")
         f.bufferedWriter(Charsets.UTF_8).use { w ->
             w.write("﻿")
-            w.write("VIAGENS\nInício;Duração (min);Distância (km);Vel. média (km/h);Vel. máx (km/h);RPM máx;Temp. máx (°C);Bateria mín (V);Bateria máx (V);Alertas\n")
+            w.write("VIAGENS\nInício;Duração (min);Distância (km);Vel. média (km/h);Vel. máx (km/h);RPM máx;Temp. máx (°C);Bateria mín (V);Bateria máx (V);Alertas;Combustível estimado (L);Consumo estimado (km/l)\n")
             db.trips().filter { it.endTs != null }.forEach { t ->
                 w.write(listOf(stamp.format(Date(t.startTs)), num(t.durationMin), "%.1f".format(t.distanceKm),
                     "%.0f".format(t.avgSpeed), num(t.maxSpeed), num(t.maxRpm), num(t.maxCoolant),
-                    num(t.minVoltage), num(t.maxVoltage), num(t.alerts)).joinToString(";") + "\n")
+                    num(t.minVoltage), num(t.maxVoltage), num(t.alerts),
+                    t.fuelL?.let { "%.2f".format(it).replace('.', ',') } ?: "",
+                    t.kmPerL?.let { "%.1f".format(it).replace('.', ',') } ?: "").joinToString(";") + "\n")
             }
             w.write("\nLEITURAS DE FALHAS\nData/Hora;Luz da injeção;Código;Descrição;Gravidade;Tipo\n")
             db.scans().forEach { s ->
@@ -60,6 +63,13 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
                     val info = DtcDatabase.lookup(c)
                     w.write("${stamp.format(Date(s.ts))};$mil;$c;${info.title};${info.severity.label};$type\n")
                 }
+            }
+            w.write("\nABASTECIMENTOS\nData/Hora;Litros;Valor (R$);Preço/L (R$);Combustível;Tanque cheio;Consumo real (km/l)\n")
+            db.refuels().forEach { r ->
+                w.write(listOf(stamp.format(Date(r.ts)), "%.2f".format(r.liters).replace('.', ','),
+                    r.total?.let { "%.2f".format(it).replace('.', ',') } ?: "", r.pricePerL?.let { "%.2f".format(it).replace('.', ',') } ?: "",
+                    r.fuel, if (r.full) "Sim" else "Não", r.realKmPerL?.let { "%.1f".format(it).replace('.', ',') } ?: ""
+                ).joinToString(";") + "\n")
             }
             w.write("\nALERTAS\nData/Hora;Nível;Alerta\n")
             db.events().forEach { e ->
@@ -137,7 +147,9 @@ class Exporter(private val context: Context, private val db: HistoryDb) {
             val temp = t.maxCoolant?.let { "temp. máx $it °C" } ?: "temp. sem leitura"
             val bat = if (t.minVoltage == null) "bateria sem leitura" else "bateria ${num(t.minVoltage)} a ${num(t.maxVoltage)} V"
             line("${stamp.format(Date(t.startTs))} · ${t.durationMin} min · ${"%.1f".format(t.distanceKm).replace('.', ',')} km · " +
-                "máx ${t.maxSpeed} km/h · ${t.maxRpm} rpm · $temp · $bat · ${t.alerts} alerta(s)", body, 5f)
+                "máx ${t.maxSpeed} km/h · ${t.maxRpm} rpm · $temp · $bat" +
+                (t.kmPerL?.let { " · ${"%.1f".format(it).replace('.', ',')} km/l (estimado)" } ?: "") +
+                " · ${t.alerts} alerta(s)", body, 5f)
         }
 
         val events = db.events().take(20)

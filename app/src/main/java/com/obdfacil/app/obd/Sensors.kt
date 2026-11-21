@@ -16,6 +16,10 @@ data class LiveData(
     val timingDeg: Double? = null,
     val milOn: Boolean? = null,
     val dtcCount: Int? = null,
+    /** Status do sistema de combustível (PID 03): 1 frio, 2 malha fechada, 4 desaceleração/carga. */
+    val fuelStatus: Int? = null,
+    /** Consumo estimado pelo app em L/h (não vem do carro). */
+    val fuelLh: Double? = null,
 ) {
     val engineRunning: Boolean get() = (rpm ?: 0) > 400
 }
@@ -23,6 +27,7 @@ data class LiveData(
 /** Os PIDs do modo 01 que o app lê, com a fórmula padrão SAE J1979. */
 enum class Pid(val code: String, val bytes: Int) {
     STATUS("01", 4),
+    FUEL_STATUS("03", 2),
     LOAD("04", 1),
     COOLANT("05", 1),
     SHORT_TRIM("06", 1),
@@ -41,6 +46,7 @@ enum class Pid(val code: String, val bytes: Int) {
 object PidMath {
     fun apply(pid: Pid, b: IntArray, current: LiveData): LiveData = when (pid) {
         Pid.STATUS -> current.copy(milOn = (b[0] and 0x80) != 0, dtcCount = b[0] and 0x7F)
+        Pid.FUEL_STATUS -> current.copy(fuelStatus = b[0])
         Pid.LOAD -> current.copy(loadPct = Math.round(b[0] * 100 / 255.0).toInt())
         Pid.COOLANT -> current.copy(coolantC = b[0] - 40)
         Pid.SHORT_TRIM -> current.copy(shortTrimPct = round1((b[0] - 128) * 100 / 128.0))

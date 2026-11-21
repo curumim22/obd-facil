@@ -44,6 +44,7 @@ import com.obdfacil.app.ui.components.AppCard
 import com.obdfacil.app.ui.components.LineChart
 import com.obdfacil.app.ui.components.Pill
 import com.obdfacil.app.ui.components.SectionTitle
+import com.obdfacil.app.ui.components.br
 import com.obdfacil.app.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -86,6 +87,29 @@ fun HistoryScreen(s: UiState, vm: MainViewModel) {
         }
         s.trips.forEach { t -> item(key = "t${t.id}") { TripCard(t) { openTrip = t } } }
 
+        if (s.fuel.refuels.isNotEmpty()) {
+            item { SectionTitle("Abastecimentos") }
+            s.fuel.refuels.take(30).forEach { r ->
+                item(key = "rf${r.id}") {
+                    AppCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(dayFmt.format(Date(r.ts)).replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                                if (r.full) Pill("Tanque cheio", Palette.Info)
+                                IconButton(onClick = { vm.deleteRefuel(r.id) }) { Icon(Icons.Rounded.Delete, "Apagar") }
+                            }
+                            Text("${br(r.liters)} L de ${r.fuel.lowercase()}" + (r.total?.let { " · R$ ${br(it, 2)}" } ?: "") +
+                                (r.pricePerL?.let { " (R$ ${br(it, 2)}/L)" } ?: ""),
+                                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            r.realKmPerL?.let { Text("Consumo real do tanque: ${br(it)} km/l",
+                                style = MaterialTheme.typography.bodyLarge, color = Palette.Good) }
+                        }
+                    }
+                }
+            }
+        }
+
         if (s.scans.isNotEmpty()) {
             item { SectionTitle("Leituras de falhas") }
             s.scans.take(30).forEach { sc ->
@@ -122,6 +146,8 @@ private fun TripCard(t: Trip, onClick: () -> Unit) {
             Spacer(Modifier.height(6.dp))
             Text("${t.durationMin} min · ${"%.1f".format(t.distanceKm)} km · máx ${t.maxSpeed} km/h",
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            t.kmPerL?.let { Text("Consumo estimado: ${br(it)} km/l · ${br(t.fuelL ?: 0.0)} L",
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface) }
             Text("Temp. máx ${t.maxCoolant ?: "--"} °C · Bateria ${t.minVoltage ?: "--"} a ${t.maxVoltage ?: "--"} V",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -157,6 +183,8 @@ private fun TripDetail(t: Trip, vm: MainViewModel, onBack: () -> Unit) {
                     Stat("Distância", "${"%.1f".format(t.distanceKm)} km")
                     Stat("Velocidade média / máxima", "${"%.0f".format(t.avgSpeed)} / ${t.maxSpeed} km/h")
                     Stat("Rotação máxima", "${t.maxRpm} rpm")
+                    t.kmPerL?.let { Stat("Consumo médio (estimado)", "${br(it)} km/l") }
+                    t.fuelL?.let { Stat("Combustível gasto (estimado)", "${br(it)} L") }
                     Stat("Temperatura máxima", "${t.maxCoolant ?: "--"} °C")
                     Stat("Bateria (mín – máx)", "${t.minVoltage ?: "--"} – ${t.maxVoltage ?: "--"} V")
                 }
@@ -173,6 +201,12 @@ private fun TripDetail(t: Trip, vm: MainViewModel, onBack: () -> Unit) {
         if (speed.size > 2) item {
             ChartCard("Velocidade (km/h)", "Máx: ${speed.max().toInt()} km/h") {
                 LineChart(speed, Palette.Info, Modifier.fillMaxWidth().height(120.dp), minY = 0f)
+            }
+        }
+        val lh = samples.mapNotNull { it.fuelLh?.toFloat() }
+        if (lh.size > 2) item {
+            ChartCard("Consumo instantâneo (L/h)", "Picos = aceleradas; zero = descida com o pé fora do acelerador") {
+                LineChart(lh, Palette.Warn, Modifier.fillMaxWidth().height(120.dp), minY = 0f)
             }
         }
         val volt = samples.mapNotNull { it.voltage?.toFloat() }

@@ -8,6 +8,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.ui.text.input.KeyboardType
+import com.obdfacil.app.analysis.FuelType
+import com.obdfacil.app.ui.components.LEVELS
+import com.obdfacil.app.ui.components.br
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +28,8 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +67,53 @@ fun SettingsScreen(s: UiState, vm: MainViewModel) {
                 options.forEachIndexed { i, label ->
                     SegmentedButton(selected = s.themeMode == i, onClick = { vm.setTheme(i) },
                         shape = SegmentedButtonDefaults.itemShape(i, options.size)) { Text(label) }
+                }
+            }
+        }
+
+        item {
+            SectionTitle("Combustível")
+            AppCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("O que você mais abastece", style = MaterialTheme.typography.titleMedium)
+                    val types = FuelType.entries
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        types.forEachIndexed { i, f ->
+                            SegmentedButton(selected = s.fuel.fuelType == f, onClick = { vm.setFuelType(f) },
+                                shape = SegmentedButtonDefaults.itemShape(i, types.size)) { Text(f.label) }
+                        }
+                    }
+
+                    var cap by remember(s.fuel.capacityL) { mutableStateOf(br(s.fuel.capacityL, 0)) }
+                    OutlinedTextField(cap, { v -> cap = v; v.replace(',', '.').toDoubleOrNull()?.let { if (it >= 20) vm.setTankCapacity(it) } },
+                        label = { Text("Capacidade do tanque (litros)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+
+                    Text("Corrigir nível do tanque agora", style = MaterialTheme.typography.titleMedium)
+                    Text("Use se o ponteiro do painel não bater com o app (por exemplo, se rodou sem o app conectado).",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LEVELS.forEach { (label, v) ->
+                            FilterChip(selected = false, onClick = { vm.setTankLevel(v) }, label = { Text(label) })
+                        }
+                    }
+
+                    Text("Calibrar com o seu consumo real", style = MaterialTheme.typography.titleMedium)
+                    Text("Se você sabe quanto o carro faz (ex.: R$ 100 de etanol rendem 250 km = 10 km/l), informe aqui para o cálculo ficar mais preciso. Também calibra sozinho a cada \"Completei o tanque\".",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    var real by remember { mutableStateOf("") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(real, { real = it }, label = { Text("km/l real") }, singleLine = true,
+                            modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { real.replace(',', '.').toDoubleOrNull()?.let { if (it in 2.0..40.0) vm.calibrateWithKnownKmL(it) } }) {
+                            Text("Calibrar")
+                        }
+                    }
+                    s.fuel.refKmL?.let {
+                        Text("Média estimada das últimas viagens: ${br(it)} km/l", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

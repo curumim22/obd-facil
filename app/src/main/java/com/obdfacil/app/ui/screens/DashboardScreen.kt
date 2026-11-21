@@ -42,17 +42,26 @@ import com.obdfacil.app.ui.components.AppCard
 import com.obdfacil.app.ui.components.ArcGauge
 import com.obdfacil.app.ui.components.BigNumber
 import com.obdfacil.app.ui.components.DetailRow
+import com.obdfacil.app.ui.components.FuelCard
+import com.obdfacil.app.ui.components.RefuelDialog
 import com.obdfacil.app.ui.components.SectionTitle
 import com.obdfacil.app.ui.components.StatusHero
 import com.obdfacil.app.ui.theme.Palette
 
 @Composable
 fun DashboardScreen(s: UiState, vm: MainViewModel, onRequestBluetooth: () -> Unit) {
+    var showRefuel by rememberSaveable { mutableStateOf(false) }
     when (s.conn) {
-        ConnState.DISCONNECTED -> ConnectPanel(s, vm, onRequestBluetooth)
+        ConnState.DISCONNECTED -> ConnectPanel(s, vm, onRequestBluetooth) { showRefuel = true }
         ConnState.CONNECTING -> Connecting(s)
-        ConnState.CONNECTED -> LivePanel(s)
+        ConnState.CONNECTED -> LivePanel(s) { showRefuel = true }
     }
+    if (showRefuel) RefuelDialog(
+        tankKnown = s.fuel.tankL != null,
+        capacityL = s.fuel.capacityL,
+        onDismiss = { showRefuel = false },
+        onSave = { l, p, t, full, level -> showRefuel = false; vm.refuel(l, p, t, full, level) },
+    )
 }
 
 @Composable
@@ -69,7 +78,7 @@ private fun Connecting(s: UiState) {
 }
 
 @Composable
-private fun ConnectPanel(s: UiState, vm: MainViewModel, onRequestBluetooth: () -> Unit) {
+private fun ConnectPanel(s: UiState, vm: MainViewModel, onRequestBluetooth: () -> Unit, onRefuel: () -> Unit) {
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Spacer(Modifier.height(8.dp))
@@ -113,6 +122,7 @@ private fun ConnectPanel(s: UiState, vm: MainViewModel, onRequestBluetooth: () -
                 }
             }
         }
+        item { FuelCard(s.fuel, connected = false, onRefuel = onRefuel) }
         item {
             OutlinedButton(onClick = { vm.connectDemo() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Icon(Icons.Rounded.PlayCircle, null); Spacer(Modifier.width(8.dp))
@@ -133,7 +143,7 @@ private fun Step(n: Int, text: String) {
 }
 
 @Composable
-private fun LivePanel(s: UiState) {
+private fun LivePanel(s: UiState, onRefuel: () -> Unit) {
     val d = s.live
     var showDetails by rememberSaveable { mutableStateOf(false) }
     val running = d.engineRunning
@@ -199,6 +209,8 @@ private fun LivePanel(s: UiState) {
                     "Viagem: ${"%.1f".format(s.tripKm)} km", Modifier.weight(1f))
             }
         }
+
+        item { FuelCard(s.fuel, connected = true, onRefuel = onRefuel) }
 
         item {
             AppCard(Modifier.fillMaxWidth()) {

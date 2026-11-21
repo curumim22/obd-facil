@@ -20,11 +20,22 @@ data class Trip(
     val minVoltage: Double?,
     val maxVoltage: Double?,
     val alerts: Int,
+    /** Combustível gasto estimado (litros); null em viagens antigas. */
+    val fuelL: Double? = null,
 ) {
+    /** Consumo médio estimado da viagem. */
+    val kmPerL: Double? get() = fuelL?.takeIf { it > 0.15 && distanceKm > 0.5 }?.let { distanceKm / it }
     val durationMin: Long get() = ((endTs ?: System.currentTimeMillis()) - startTs) / 60000
 }
 
 data class EventRow(val id: Long, val tripId: Long?, val ts: Long, val level: String, val title: String, val message: String)
+
+data class Refuel(
+    val id: Long, val ts: Long, val liters: Double, val pricePerL: Double?, val total: Double?,
+    val full: Boolean, val fuel: String,
+    /** Consumo real medido de tanque cheio a tanque cheio (km/l), quando foi possível calcular. */
+    val realKmPerL: Double?,
+)
 
 data class ScanRow(val id: Long, val ts: Long, val milOn: Boolean?, val codes: List<String>, val pending: List<String>)
 
@@ -33,6 +44,7 @@ class TripStats {
     var distanceKm = 0.0; var maxSpeed = 0; var maxRpm = 0
     var maxCoolant: Int? = null; var minVoltage: Double? = null; var maxVoltage: Double? = null
     var speedSum = 0.0; var speedCount = 0; var alerts = 0
+    var fuelL = 0.0
     private var lastTs: Long? = null
 
     fun add(d: LiveData, maxGapMs: Long = 10_000) {
@@ -40,6 +52,7 @@ class TripStats {
         lastTs?.let { prev ->
             val gap = d.timestamp - prev
             if (s != null && gap in 0..maxGapMs) distanceKm += s * gap / 3_600_000.0
+            d.fuelLh?.let { if (gap in 0..maxGapMs) fuelL += it * gap / 3_600_000.0 }
         }
         lastTs = d.timestamp
         s?.let { maxSpeed = maxOf(maxSpeed, it); if (it > 0) { speedSum += it; speedCount++ } }
@@ -50,22 +63,48 @@ class TripStats {
     val avgSpeed get() = if (speedCount == 0) 0.0 else speedSum / speedCount
 }
 
-class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", null, 1) {
+class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE trips(id INTEGER PRIMARY KEY AUTOINCREMENT, start_ts INTEGER, end_ts INTEGER,
             distance_km REAL DEFAULT 0, max_speed INTEGER DEFAULT 0, avg_speed REAL DEFAULT 0, max_rpm INTEGER DEFAULT 0,
-            max_coolant INTEGER, min_voltage REAL, max_voltage REAL, alerts INTEGER DEFAULT 0)""")
+            max_coolant INTEGER, min_voltage REAL, max_voltage REAL, alerts INTEGER DEFAULT 0, fuel_l REAL)""")
         db.execSQL("""CREATE TABLE samples(trip_id INTEGER, ts INTEGER, rpm INTEGER, speed INTEGER, coolant INTEGER,
-            intake INTEGER, load INTEGER, throttle INTEGER, voltage REAL, stft REAL, ltft REAL, map INTEGER)""")
+            intake INTEGER, load INTEGER, throttle INTEGER, voltage REAL, stft REAL, ltft REAL, map INTEGER, fuel_lh REAL)""")
         db.execSQL("CREATE INDEX idx_samples_trip ON samples(trip_id)")
         db.execSQL("""CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, ts INTEGER,
             level TEXT, title TEXT, message TEXT)""")
         db.execSQL("""CREATE TABLE scans(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, mil INTEGER,
             codes TEXT, pending TEXT)""")
+        createRefuels(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    private fun createRefuels(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS refuels(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, liters REAL,
+            price_per_l REAL, total REAL, full INTEGER, fuel TEXT, real_kml REAL)""")
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE trips ADD COLUMN fuel_l REAL")
+            db.execSQL("ALTER TABLE samples ADD COLUMN fuel_lh REAL")
+            createRefuels(db)
+        }
+    }
+
+    fun addRefuel(liters: Double, pricePerL: Double?, total: Double?, full: Boolean, fuel: String, realKmPerL: Double?): Long =
+        writableDatabase.insert("refuels", null, ContentValues().apply {
+            put("ts", System.currentTimeMillis()); put("liters", liters)
+            pricePerL?.let { put("price_per_l", it) }; total?.let { put("total", it) }
+            put("full", if (full) 1 else 0); put("fuel", fuel); realKmPerL?.let { put("real_kml", it) }
+        })
+
+    fun refuels(): List<Refuel> = readableDatabase.rawQuery("SELECT * FROM refuels ORDER BY ts DESC", null).use { c ->
+        buildList { while (c.moveToNext()) add(Refuel(c.long("id"), c.long("ts"), c.double("liters"),
+            c.doubleOrNull("price_per_l"), c.doubleOrNull("total"), c.int("full") == 1, c.str("fuel"), c.doubleOrNull("real_kml"))) }
+    }
+
+    fun deleteRefuel(id: Long) { writableDatabase.delete("refuels", "id=?", arrayOf(id.toString())) }
 
     fun startTrip(ts: Long): Long = writableDatabase.insert("trips", null, ContentValues().apply { put("start_ts", ts) })
 
@@ -73,6 +112,7 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
         writableDatabase.update("trips", ContentValues().apply {
             put("end_ts", endTs); put("distance_km", s.distanceKm); put("max_speed", s.maxSpeed)
             put("avg_speed", s.avgSpeed); put("max_rpm", s.maxRpm); put("alerts", s.alerts)
+            if (s.fuelL > 0) put("fuel_l", s.fuelL)
             s.maxCoolant?.let { put("max_coolant", it) }
             s.minVoltage?.let { put("min_voltage", it) }
             s.maxVoltage?.let { put("max_voltage", it) }
@@ -87,6 +127,7 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
             d.loadPct?.let { put("load", it) }; d.throttlePct?.let { put("throttle", it) }
             d.voltage?.let { put("voltage", it) }; d.shortTrimPct?.let { put("stft", it) }
             d.longTrimPct?.let { put("ltft", it) }; d.mapKpa?.let { put("map", it) }
+            d.fuelLh?.let { put("fuel_lh", it) }
         })
     }
 
@@ -109,7 +150,7 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
         buildList { while (c.moveToNext()) add(Trip(
             c.long("id"), c.long("start_ts"), c.longOrNull("end_ts"), c.double("distance_km"),
             c.int("max_speed"), c.double("avg_speed"), c.int("max_rpm"), c.intOrNull("max_coolant"),
-            c.doubleOrNull("min_voltage"), c.doubleOrNull("max_voltage"), c.int("alerts"))) }
+            c.doubleOrNull("min_voltage"), c.doubleOrNull("max_voltage"), c.int("alerts"), c.doubleOrNull("fuel_l"))) }
     }
 
     fun samples(tripId: Long): List<LiveData> =
@@ -118,7 +159,8 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
                 timestamp = c.long("ts"), rpm = c.intOrNull("rpm"), speedKmh = c.intOrNull("speed"),
                 coolantC = c.intOrNull("coolant"), intakeC = c.intOrNull("intake"), loadPct = c.intOrNull("load"),
                 throttlePct = c.intOrNull("throttle"), voltage = c.doubleOrNull("voltage"),
-                shortTrimPct = c.doubleOrNull("stft"), longTrimPct = c.doubleOrNull("ltft"), mapKpa = c.intOrNull("map"))) }
+                shortTrimPct = c.doubleOrNull("stft"), longTrimPct = c.doubleOrNull("ltft"), mapKpa = c.intOrNull("map"),
+                fuelLh = c.doubleOrNull("fuel_lh"))) }
         }
 
     fun events(tripId: Long? = null): List<EventRow> {
@@ -164,7 +206,7 @@ class HistoryDb(context: Context) : SQLiteOpenHelper(context, "historico.db", nu
     }
 
     fun clearAll() {
-        listOf("samples", "events", "trips", "scans").forEach { writableDatabase.delete(it, null, null) }
+        listOf("samples", "events", "trips", "scans", "refuels").forEach { writableDatabase.delete(it, null, null) }
     }
 
     private fun Cursor.idx(n: String) = getColumnIndexOrThrow(n)

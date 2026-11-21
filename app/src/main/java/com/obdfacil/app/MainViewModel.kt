@@ -15,7 +15,11 @@ import com.obdfacil.app.analysis.DtcDatabase
 import com.obdfacil.app.analysis.DtcInfo
 import com.obdfacil.app.analysis.HealthAnalyzer
 import com.obdfacil.app.analysis.Level
+import com.obdfacil.app.analysis.FuelModel
+import com.obdfacil.app.analysis.FuelType
 import com.obdfacil.app.data.EventRow
+import com.obdfacil.app.data.FuelTank
+import com.obdfacil.app.data.Refuel
 import com.obdfacil.app.data.HistoryDb
 import com.obdfacil.app.data.ScanRow
 import com.obdfacil.app.data.Trip
@@ -41,6 +45,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class ConnState { DISCONNECTED, CONNECTING, CONNECTED }
+
+/** Tudo que a tela de combustível precisa mostrar. */
+data class FuelUi(
+    val instantLh: Double? = null,
+    val instantKmL: Double? = null,
+    val fuelCut: Boolean = false,
+    val tripFuelL: Double = 0.0,
+    val tripKmL: Double? = null,
+    val tankL: Double? = null,
+    val capacityL: Double = 50.0,
+    val refKmL: Double? = null,
+    val fuelType: FuelType = FuelType.ETANOL,
+    val calibration: Double = 1.0,
+    val refuels: List<Refuel> = emptyList(),
+) {
+    val rangeKm: Double? get() = if (tankL != null && refKmL != null) tankL * refKmL else null
+    val tankFraction: Double? get() = tankL?.let { (it / capacityL).coerceIn(0.0, 1.0) }
+}
 
 data class DeviceItem(val name: String, val address: String)
 
@@ -75,6 +97,7 @@ data class UiState(
     val toast: String? = null,
     val themeMode: Int = 0, // 0 = automático, 1 = escuro, 2 = claro
     val notice: String? = null,
+    val fuel: FuelUi = FuelUi(),
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -90,6 +113,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("obd", Context.MODE_PRIVATE)
     val db = HistoryDb(app)
     private val exporter = Exporter(app, db)
+    private val tank = FuelTank(prefs)
 
     private val _ui = MutableStateFlow(UiState(
         savedDevice = prefs.getString("device", null),
@@ -111,8 +135,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var lastSampleSaved = 0L
     private val activeKeys = mutableMapOf<String, Level>()
     private val dismissedCritical = mutableSetOf<String>()
+    // Consumo
+    private var throttleMin: Int? = null
+    private var throttleReadings = 0
+    private var lastFuelTs: Long? = null
+    private var smoothLh: Double? = null
+    private var smoothSpeed: Double? = null
 
     init {
+        TechLog.init(app.filesDir)
+        publishFuel()
         viewModelScope.launch(Dispatchers.IO) { runCatching { db.repairOpenTrips() }; refreshHistory() }
     }
 
@@ -159,7 +191,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "PIDs suportados: ${c.supported.sorted().joinToString(" ") { "%02X".format(it) }}"
                 _ui.update { it.copy(conn = ConnState.CONNECTED, protocol = c.protocolName, adapter = c.adapterVersion,
                     supportedCount = c.supported.size, connStep = "") }
-                if (!isDemo) beginTrip()
+                throttleMin = null; throttleReadings = 0
+                if (!isDemo) beginTrip() else { stats = TripStats(); lastFuelTs = null; smoothLh = null; smoothSpeed = null }
                 scanDtcsInternal(c)
                 pollLoop(c)
             } catch (e: CancellationException) {
@@ -185,10 +218,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         activeKeys.clear(); dismissedCritical.clear(); trimHighSince = null
         _ui.update { it.copy(conn = ConnState.DISCONNECTED, live = LiveData(), recent = emptyList(), alerts = emptyList(),
             overall = Level.OK, connStep = "", tripStartTs = null, tripKm = 0.0) }
+        publishFuel()
     }
 
-    private val fast = listOf(Pid.RPM, Pid.SPEED, Pid.COOLANT, Pid.LOAD, Pid.THROTTLE)
-    private val slow = listOf(Pid.INTAKE, Pid.SHORT_TRIM, Pid.LONG_TRIM, Pid.MAP, Pid.TIMING, Pid.STATUS, Pid.MODULE_VOLTAGE)
+    // Rápidos: o que o cálculo de consumo precisa a cada leitura. Lentos: o que muda devagar.
+    private val fast = listOf(Pid.RPM, Pid.SPEED, Pid.MAP, Pid.THROTTLE)
+    private val slow = listOf(Pid.COOLANT, Pid.FUEL_STATUS, Pid.LOAD, Pid.INTAKE, Pid.SHORT_TRIM, Pid.LONG_TRIM,
+        Pid.TIMING, Pid.STATUS, Pid.MODULE_VOLTAGE)
 
     private suspend fun pollLoop(c: ObdClient) {
         var cycle = 0
@@ -196,8 +232,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         var live = LiveData()
         while (currentCoroutineContext().isActive) {
             try {
-                val pids = if (cycle % 4 == 0) fast + slow else fast
-                live = c.read(pids, live, includeVoltage = cycle % 4 == 0)
+                val pids = if (cycle % 3 == 0) fast + slow else fast
+                live = c.read(pids, live, includeVoltage = cycle % 3 == 0)
                 failures = 0
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
@@ -212,13 +248,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun onNewData(d: LiveData) {
+    private fun onNewData(raw: LiveData) {
+        val d = withFuel(raw)
         stats.add(d)
         tripId?.let { id ->
             if (d.timestamp - lastSampleSaved >= 2000) { db.addSample(id, d); lastSampleSaved = d.timestamp; sampleCount++ }
             // Guarda o resumo a cada 30 s: se o app for fechado de repente, a viagem não se perde
             if (d.timestamp - lastSummarySaved >= 30_000 && sampleCount >= 5) {
                 db.finishTrip(id, stats, d.timestamp); lastSummarySaved = d.timestamp
+                tank.save(); TechLog.save()
             }
         }
         // Conta há quanto tempo a correção da mistura está fora do normal
@@ -226,14 +264,109 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val trimLimit = if (trimActive) HealthAnalyzer.TRIM_RELEASE else HealthAnalyzer.TRIM_LIMIT
         trimHighSince = if (HealthAnalyzer.trimOutOfRange(d, trimLimit)) (trimHighSince ?: d.timestamp) else null
         val trimHighFor = trimHighSince?.let { d.timestamp - it } ?: 0L
-        val alerts = HealthAnalyzer.analyze(d, _ui.value.stored + _ui.value.pending, trimHighFor, trimLimit)
+        val alerts = (HealthAnalyzer.analyze(d, _ui.value.stored + _ui.value.pending, trimHighFor, trimLimit) +
+            listOfNotNull(fuelAlert())).sortedByDescending { it.level.ordinal }
         handleAlerts(alerts)
         _ui.update { s ->
             val cutoff = d.timestamp - 120_000
             s.copy(live = d, alerts = alerts, overall = HealthAnalyzer.overall(alerts),
                 recent = (s.recent + d).filter { it.timestamp >= cutoff }, tripKm = stats.distanceKm)
         }
+        publishFuel()
     }
+
+    // ---------- Consumo ----------
+
+    /** Calcula o consumo desta leitura e desconta do tanque. */
+    private fun withFuel(d: LiveData): LiveData {
+        d.throttlePct?.let { t -> throttleMin = minOf(throttleMin ?: t, t); throttleReadings++ }
+        val closedMax = if (throttleReadings >= 5) throttleMin?.plus(2) else null
+        val lh = FuelModel.litersPerHour(d, tank.fuelType, tank.calibration, closedMax)
+        val out = d.copy(fuelLh = lh)
+        val prev = lastFuelTs
+        lastFuelTs = d.timestamp
+        if (prev != null && lh != null && !_ui.value.isDemo) {
+            val gap = d.timestamp - prev
+            if (gap in 1..10_000) tank.consume(lh * gap / 3_600_000.0, (d.speedKmh ?: 0) * gap / 3_600_000.0)
+        }
+        // Suaviza para o número não ficar pulando na tela
+        if (lh != null) smoothLh = smoothLh?.let { it + (lh - it) * 0.4 } ?: lh
+        d.speedKmh?.let { v -> smoothSpeed = smoothSpeed?.let { it + (v - it) * 0.4 } ?: v.toDouble() }
+        return out
+    }
+
+    private fun fuelAlert(): Alert? {
+        val l = tank.litersInTank ?: return null
+        if (l >= 6.0) return null
+        val km = _ui.value.fuel.refKmL?.let { " (uns ${"%.0f".format(it * l)} km)" } ?: ""
+        return Alert("fuel", Level.WARNING, "Combustível na reserva",
+            "Pela estimativa do app restam cerca de ${"%.0f".format(l)} litros$km.",
+            "Abasteça assim que puder. Rodar na reserva pode puxar sujeira do fundo do tanque para a bomba.")
+    }
+
+    private fun publishFuel() {
+        val live = _ui.value.live
+        val connected = _ui.value.conn == ConnState.CONNECTED
+        val cut = connected && live.fuelLh == 0.0 && (live.rpm ?: 0) > 400
+        _ui.update { s -> s.copy(fuel = s.fuel.copy(
+            instantLh = if (connected) smoothLh else null,
+            instantKmL = if (connected) FuelModel.kmPerLiter(smoothSpeed, smoothLh) else null,
+            fuelCut = cut,
+            tripFuelL = stats.fuelL,
+            tripKmL = if (stats.fuelL > 0.1 && stats.distanceKm > 0.3) stats.distanceKm / stats.fuelL else null,
+            tankL = tank.litersInTank,
+            capacityL = tank.capacityL,
+            fuelType = tank.fuelType,
+            calibration = tank.calibration,
+        )) }
+    }
+
+    /** Consumo médio estimado das últimas viagens (até ~300 km), usado para a autonomia. */
+    private fun referenceKmPerL(trips: List<Trip>): Double? {
+        var km = 0.0; var l = 0.0
+        for (t in trips) {
+            val f = t.fuelL ?: continue
+            if (f <= 0.05) continue
+            km += t.distanceKm; l += f
+            if (km >= 300) break
+        }
+        return if (km >= 5 && l > 0) km / l else null
+    }
+
+    fun refuel(liters: Double, pricePerL: Double?, total: Double?, full: Boolean, levelBefore: Double?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = tank.refuel(liters, full, levelBefore)
+            db.addRefuel(liters, pricePerL, total, full, tank.fuelType.label, r.realKmPerL)
+            val msg = when {
+                r.realKmPerL != null -> "Abastecimento salvo. Consumo real deste tanque: ${"%.1f".format(r.realKmPerL)} km/l. O cálculo foi ajustado."
+                full -> "Abastecimento salvo. Tanque cheio: a partir de agora o app mede o consumo real."
+                else -> "Abastecimento salvo."
+            }
+            _ui.update { it.copy(toast = msg) }
+            publishFuel(); refreshHistory()
+        }
+    }
+
+    fun deleteRefuel(id: Long) = viewModelScope.launch(Dispatchers.IO) { db.deleteRefuel(id); refreshHistory() }
+
+    fun setTankLevel(fraction: Double) { tank.setLevel(fraction); publishFuel() }
+
+    fun setFuelType(f: FuelType) { tank.fuelType = f; publishFuel() }
+
+    fun setTankCapacity(l: Double) { tank.capacityL = l; publishFuel() }
+
+    /** Ajusta o cálculo para bater com o consumo real que o usuário conhece. */
+    fun calibrateWithKnownKmL(real: Double) {
+        val est = _ui.value.fuel.refKmL
+        val msg = if (est == null) "Rode pelo menos 5 km com o app conectado antes de calibrar." else {
+            tank.calibrateTo(real, est)
+            publishFuel()
+            "Pronto! As próximas leituras usam ${"%.1f".format(real)} km/l como referência."
+        }
+        _ui.update { it.copy(toast = msg) }
+    }
+
+    fun resetFuel() { tank.reset(); publishFuel() }
 
     /**
      * Grava e avisa só quando um alerta é novo, quando piora, ou depois de 10 minutos.
@@ -309,6 +442,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun beginTrip() {
         stats = TripStats(); sampleCount = 0; lastSampleSaved = 0; lastSummarySaved = 0; lastLogged.clear()
+        lastFuelTs = null; smoothLh = null; smoothSpeed = null
         val now = System.currentTimeMillis()
         tripId = db.startTrip(now)
         _ui.update { it.copy(tripStartTs = now) }
@@ -318,19 +452,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = tripId ?: return
         tripId = null
         if (sampleCount < 5) db.deleteTrip(id) else db.finishTrip(id, stats, System.currentTimeMillis())
+        tank.save(); TechLog.save()
         refreshHistory()
     }
 
     fun refreshHistory() {
         viewModelScope.launch(Dispatchers.IO) {
             val trips = db.trips().filter { it.endTs != null }
-            _ui.update { it.copy(trips = trips, scans = db.scans(), events = db.events()) }
+            val refKmL = referenceKmPerL(trips)
+            _ui.update { it.copy(trips = trips, scans = db.scans(), events = db.events(),
+                fuel = it.fuel.copy(refuels = db.refuels(), refKmL = refKmL)) }
         }
     }
 
     fun deleteTrip(id: Long) = viewModelScope.launch(Dispatchers.IO) { db.deleteTrip(id); refreshHistory() }
 
-    fun clearHistory() = viewModelScope.launch(Dispatchers.IO) { db.clearAll(); refreshHistory() }
+    fun clearHistory() = viewModelScope.launch(Dispatchers.IO) { db.clearAll(); tank.reset(); publishFuel(); refreshHistory() }
 
     fun samples(tripId: Long) = db.samples(tripId)
     fun tripEvents(tripId: Long) = db.events(tripId)
