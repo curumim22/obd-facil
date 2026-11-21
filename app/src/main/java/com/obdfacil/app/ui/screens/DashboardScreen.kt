@@ -86,6 +86,7 @@ private fun ConnectPanel(s: UiState, vm: MainViewModel, onRequestBluetooth: () -
                 }
             }
         }
+        s.notice?.let { msg -> item { AlertCard(com.obdfacil.app.analysis.Alert("notice", Level.INFO, "Conexão encerrada", msg, "")) } }
         s.error?.let { err -> item { AlertCard(com.obdfacil.app.analysis.Alert("err", Level.WARNING, "Não conectou", err, "")) } }
         item {
             Button(onClick = onRequestBluetooth, modifier = Modifier.fillMaxWidth().height(56.dp)) {

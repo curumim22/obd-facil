@@ -13,6 +13,8 @@ class ObdClient(private val transport: ObdTransport) {
     var adapterVersion: String = ""; private set
     val isCan: Boolean get() = protocolNumber.trimStart('A').firstOrNull()?.let { it in '6'..'9' || it in 'A'..'C' } ?: false
     private var useAdapterVoltage = true
+    /** Hora da última resposta válida da central do motor (não conta a tensão lida pelo adaptador). */
+    @Volatile var lastEcuResponse: Long = System.currentTimeMillis(); private set
 
     val protocolName: String
         get() = when (protocolNumber.trimStart('A')) {
@@ -43,6 +45,7 @@ class ObdClient(private val transport: ObdTransport) {
         }
         supported = set
         useAdapterVoltage = Pid.MODULE_VOLTAGE.number !in supported
+        lastEcuResponse = System.currentTimeMillis()
     }
 
     fun supports(pid: Pid) = pid == Pid.STATUS || pid.number in supported
@@ -55,6 +58,7 @@ class ObdClient(private val transport: ObdTransport) {
             val raw = transport.send("01" + pid.code, 3000)
             val bytes = ObdParser.parseMode01(pid.code, raw, pid.bytes) ?: continue
             data = PidMath.apply(pid, bytes, data)
+            lastEcuResponse = System.currentTimeMillis()
         }
         if (includeVoltage && useAdapterVoltage) {
             // Tensão medida pelo próprio adaptador no pino 16 da tomada (= bateria)
@@ -69,6 +73,9 @@ class ObdClient(private val transport: ObdTransport) {
         // Status da luz da injeção; carros K-Line às vezes não respondem na primeira
         val status = ObdParser.parseMode01("01", transport.send("0101", 6000), 4)
             ?: run { delay(300); ObdParser.parseMode01("01", transport.send("0101", 6000), 4) }
+            // Em K-Line, "NO DATA" no modo 03 também significa "sem falhas". Por isso só confiamos
+            // na leitura se a central respondeu ao status: senão a ignição provavelmente está desligada.
+            ?: throw IllegalStateException("O carro não respondeu. Ligue a ignição e tente de novo.")
         val stored = ObdParser.parseDtcs(transport.send("03", 6000), isCan, "43")
         val pending = ObdParser.parseDtcs(transport.send("07", 6000), isCan, "47").filterNot { it in stored }
         DtcResult(stored, pending, status?.let { (it[0] and 0x80) != 0 })

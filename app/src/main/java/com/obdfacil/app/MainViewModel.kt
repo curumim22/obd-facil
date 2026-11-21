@@ -74,11 +74,17 @@ data class UiState(
     val demoLowBattery: Boolean = false,
     val toast: String? = null,
     val themeMode: Int = 0, // 0 = automático, 1 = escuro, 2 = claro
+    val notice: String? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
-    companion object { private const val REPEAT_MS = 10 * 60_000L }
+    companion object {
+        private const val REPEAT_MS = 10 * 60_000L
+        private const val IGNITION_OFF_MS = 15_000L
+    }
+
+    private class IgnitionOff : Exception()
 
     private val ctx: Context get() = getApplication()
     private val prefs = app.getSharedPreferences("obd", Context.MODE_PRIVATE)
@@ -143,7 +149,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun start(c: ObdClient, isDemo: Boolean) {
         disconnect()
         client = c
-        _ui.update { it.copy(conn = ConnState.CONNECTING, connStep = "Conectando ao adaptador…", error = null, isDemo = isDemo) }
+        _ui.update { it.copy(conn = ConnState.CONNECTING, connStep = "Conectando ao adaptador…", error = null, notice = null, isDemo = isDemo) }
         loop = viewModelScope.launch(Dispatchers.IO) {
             try {
                 _ui.update { it.copy(connStep = "Conversando com o carro… (pode levar até 15 segundos)") }
@@ -158,6 +164,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 pollLoop(c)
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: IgnitionOff) {
+                endTrip()
+                c.close()
+                _ui.update { it.copy(conn = ConnState.DISCONNECTED, connStep = "", error = null,
+                    notice = "Ignição desligada. A viagem foi salva no Histórico.",
+                    live = LiveData(), recent = emptyList(), alerts = emptyList(), overall = Level.OK) }
             } catch (e: Exception) {
                 endTrip()
                 c.close()
@@ -192,6 +204,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (++failures >= 3) throw IllegalStateException("A conexão com o adaptador caiu. Toque em Conectar para tentar de novo.")
                 delay(500); continue
             }
+            // Ignição desligada: a central para de responder (o adaptador continua ligado na bateria)
+            if (System.currentTimeMillis() - c.lastEcuResponse > IGNITION_OFF_MS) throw IgnitionOff()
             cycle++
             onNewData(live)
             delay(150)
@@ -277,7 +291,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             refreshHistory()
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
-            _ui.update { it.copy(scanning = false, toast = "Não foi possível ler as falhas agora.") }
+            _ui.update { it.copy(scanning = false, toast = e.message ?: "Não foi possível ler as falhas agora.") }
         }
     }
 
