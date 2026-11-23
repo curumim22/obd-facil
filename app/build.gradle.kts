@@ -12,8 +12,8 @@ android {
         applicationId = "com.obdfacil.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
     }
 
     // Assinatura fixa: o mesmo certificado em toda compilação, para o Android aceitar

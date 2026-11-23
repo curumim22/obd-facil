@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CompareArrows
 import androidx.compose.material.icons.rounded.LocalGasStation
+import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -57,6 +59,28 @@ private fun parseBr(s: String) = s.trim().replace("R$", "").replace(" ", "").rep
 val LEVELS = listOf("Reserva" to 0.08, "1/4" to 0.25, "1/2" to 0.5, "3/4" to 0.75, "Cheio" to 1.0)
 
 class FuelActions(val onRefuel: () -> Unit, val onCompare: () -> Unit)
+
+/**
+ * Abre o Waze pesquisando postos perto de onde o usuário está (lá aparecem os preços
+ * informados pela comunidade). Sem Waze instalado, cai para o app de mapas (Google Maps).
+ * O OBD Fácil não precisa de internet nem de localização para isso: quem busca é o outro app.
+ */
+fun openNearbyStations(context: android.content.Context): Boolean {
+    val attempts = listOf(
+        "waze://?q=posto%20de%20combust%C3%ADvel",
+        "geo:0,0?q=posto+de+combust%C3%ADvel",
+        "https://www.google.com/maps/search/posto+de+combust%C3%ADvel",
+    )
+    for (uri in attempts) {
+        try {
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(uri))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        } catch (_: android.content.ActivityNotFoundException) {
+        }
+    }
+    return false
+}
 
 /** Cartão de combustível do Painel: consumo agora, média da viagem, tanque e autonomia. */
 @Composable
@@ -129,6 +153,13 @@ fun FuelCard(f: FuelUi, connected: Boolean, odometer: Double?, actions: FuelActi
                 OutlinedButton(onClick = actions.onCompare, modifier = Modifier.weight(1f).height(44.dp)) {
                     Icon(Icons.Rounded.CompareArrows, null); Spacer(Modifier.width(6.dp)); Text("Qual compensa?")
                 }
+            }
+            val context = LocalContext.current
+            OutlinedButton(onClick = {
+                if (!openNearbyStations(context)) android.widget.Toast.makeText(context,
+                    "Instale o Waze ou o Google Maps para ver postos próximos.", android.widget.Toast.LENGTH_LONG).show()
+            }, modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                Icon(Icons.Rounded.NearMe, null); Spacer(Modifier.width(6.dp)); Text("Postos próximos e preços")
             }
             Text("Estimativa do app: conta só o que foi rodado com o app conectado.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
