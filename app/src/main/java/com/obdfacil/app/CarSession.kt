@@ -101,6 +101,8 @@ data class UiState(
     val milDistanceKm: Int? = null,
     val estimatedOdometer: Double? = null,
     val fuel: FuelUi = FuelUi(),
+    val oilPlan: com.obdfacil.app.data.OilPlan? = null,
+    val oilHistory: List<com.obdfacil.app.data.OilChange> = emptyList(),
 )
 
 /**
@@ -126,6 +128,7 @@ class CarSession(private val app: Application) {
     val db = HistoryDb(app)
     private val exporter = Exporter(app, db)
     private val tank = FuelTank(prefs)
+    private val oil = com.obdfacil.app.data.OilTracker(prefs)
 
     private val _ui = MutableStateFlow(UiState(
         savedDevice = prefs.getString("device", null),
@@ -336,7 +339,30 @@ class CarSession(private val app: Application) {
             fuelType = tank.fuelType,
             calibration = tank.calibration,
         ), estimatedOdometer = tank.estimatedOdometer) }
+        publishOil()
     }
+
+    private fun publishOil() {
+        val plan = oil.last?.let { com.obdfacil.app.data.OilPlan.of(it, tank.estimatedOdometer) }
+        _ui.update { it.copy(oilPlan = plan, oilHistory = oil.history) }
+    }
+
+    /** Registra uma troca de óleo. Se a km informada é a atual (ou a mais recente conhecida), atualiza o odômetro. */
+    fun registerOilChange(km: Double, oilType: String, intervalKm: Int, months: Int, filter: Boolean, ts: Long = System.currentTimeMillis()) {
+        oil.add(com.obdfacil.app.data.OilChange(ts, km, oilType.trim(), intervalKm, months, filter))
+        prefs.edit().putString("oil_type_last", oilType.trim()).putInt("oil_interval_last", intervalKm)
+            .putInt("oil_months_last", months).apply()
+        val est = tank.estimatedOdometer
+        if (est == null || km >= est - 50) tank.setOdometer(km)
+        publishFuel()
+        _ui.update { it.copy(toast = "Troca de óleo registrada. Próxima aos ${com.obdfacil.app.ui.components.brKm(km + intervalKm)} km.") }
+    }
+
+    fun deleteOilChange(ts: Long) { oil.delete(ts); publishOil() }
+
+    fun lastOilType(): String = prefs.getString("oil_type_last", null) ?: ""
+    fun lastOilInterval(): Int = prefs.getInt("oil_interval_last", 5000)
+    fun lastOilMonths(): Int = prefs.getInt("oil_months_last", 6)
 
     /** Consumo médio estimado das últimas viagens (até ~300 km), usado para a autonomia. */
     private fun referenceKmPerL(trips: List<Trip>): Double? {

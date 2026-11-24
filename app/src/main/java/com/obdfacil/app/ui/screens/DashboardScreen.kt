@@ -48,6 +48,8 @@ import com.obdfacil.app.ui.components.FuelCard
 import com.obdfacil.app.ui.components.FuelCompareDialog
 import com.obdfacil.app.ui.components.InfoLine
 import com.obdfacil.app.ui.components.RefuelDialog
+import com.obdfacil.app.ui.components.OilCard
+import com.obdfacil.app.ui.components.OilDialog
 import com.obdfacil.app.ui.components.SectionTitle
 import com.obdfacil.app.ui.components.StatusHero
 import com.obdfacil.app.ui.theme.Palette
@@ -56,12 +58,23 @@ import com.obdfacil.app.ui.theme.Palette
 fun DashboardScreen(s: UiState, vm: CarSession, onRequestBluetooth: () -> Unit) {
     var showRefuel by rememberSaveable { mutableStateOf(false) }
     var showCompare by rememberSaveable { mutableStateOf(false) }
+    var showOil by rememberSaveable { mutableStateOf(false) }
     val fuelActions = FuelActions(onRefuel = { showRefuel = true }, onCompare = { showCompare = true })
-    when (s.conn) {
-        ConnState.DISCONNECTED -> ConnectPanel(s, vm, onRequestBluetooth, fuelActions)
-        ConnState.CONNECTING -> Connecting(s)
-        ConnState.CONNECTED -> LivePanel(s, fuelActions)
+    val oilCard: @Composable () -> Unit = {
+        OilCard(s.oilPlan, s.oilHistory, onRegister = { showOil = true }, onDelete = { vm.deleteOilChange(it) })
     }
+    when (s.conn) {
+        ConnState.DISCONNECTED -> ConnectPanel(s, vm, onRequestBluetooth, fuelActions, oilCard)
+        ConnState.CONNECTING -> Connecting(s)
+        ConnState.CONNECTED -> LivePanel(s, fuelActions, oilCard)
+    }
+    if (showOil) OilDialog(
+        estimatedOdometer = s.estimatedOdometer,
+        firstTime = s.oilPlan == null,
+        lastType = vm.lastOilType(), lastInterval = vm.lastOilInterval(), lastMonths = vm.lastOilMonths(),
+        onDismiss = { showOil = false },
+        onSave = { o -> showOil = false; vm.registerOilChange(o.km, o.oilType, o.intervalKm, o.months, o.filter, o.ts) },
+    )
     if (showCompare) FuelCompareDialog(
         lastEthanol = vm.lastPrice(FuelType.ETANOL),
         lastGasoline = vm.lastPrice(FuelType.GASOLINA),
@@ -94,7 +107,7 @@ private fun Connecting(s: UiState) {
 }
 
 @Composable
-private fun ConnectPanel(s: UiState, vm: CarSession, onRequestBluetooth: () -> Unit, fuel: FuelActions) {
+private fun ConnectPanel(s: UiState, vm: CarSession, onRequestBluetooth: () -> Unit, fuel: FuelActions, oilCard: @Composable () -> Unit) {
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Spacer(Modifier.height(8.dp))
@@ -139,6 +152,7 @@ private fun ConnectPanel(s: UiState, vm: CarSession, onRequestBluetooth: () -> U
             }
         }
         item { FuelCard(s.fuel, connected = false, odometer = s.estimatedOdometer, actions = fuel) }
+        item { oilCard() }
         item {
             OutlinedButton(onClick = { vm.connectDemo() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Icon(Icons.Rounded.PlayCircle, null); Spacer(Modifier.width(8.dp))
@@ -159,7 +173,7 @@ private fun Step(n: Int, text: String) {
 }
 
 @Composable
-private fun LivePanel(s: UiState, fuel: FuelActions) {
+private fun LivePanel(s: UiState, fuel: FuelActions, oilCard: @Composable () -> Unit) {
     val d = s.live
     var showDetails by rememberSaveable { mutableStateOf(false) }
     val running = d.engineRunning
@@ -232,6 +246,7 @@ private fun LivePanel(s: UiState, fuel: FuelActions) {
         }
 
         item { FuelCard(s.fuel, connected = true, odometer = s.estimatedOdometer, actions = fuel) }
+        item { oilCard() }
 
         item {
             AppCard(Modifier.fillMaxWidth()) {

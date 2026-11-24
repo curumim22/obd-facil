@@ -61,8 +61,8 @@ jobs:
       - name: Publicar versão para download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.6.${{ github.run_number }}
-          name: OBD Fácil v1.6.${{ github.run_number }}
+          tag_name: v1.7.${{ github.run_number }}
+          name: OBD Fácil v1.7.${{ github.run_number }}
           body: "Baixe o arquivo **OBD-Facil.apk** abaixo pelo celular e instale por cima da versão anterior."
           files: OBD-Facil.apk
 
