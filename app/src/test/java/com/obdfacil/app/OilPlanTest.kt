@@ -31,3 +31,10 @@ class OilPlanTest {
         assertEquals(OilStatus.OK, p.status); assertEquals(null, p.remainingKm)
     }
 }
+
+class OilFiltersTextTest {
+    private fun c(o: Boolean, a: Boolean, f: Boolean) = OilChange(0, 0.0, "", 5000, 6, o, a, f)
+    @Test fun none() = assertEquals("", c(false, false, false).filtersText)
+    @Test fun one() = assertEquals("filtro de ar", c(false, true, false).filtersText)
+    @Test fun all() = assertEquals("filtros de óleo, ar e combustível", c(true, true, true).filtersText)
+}

@@ -12,7 +12,19 @@ data class OilChange(
     val intervalKm: Int,
     val months: Int,
     val filter: Boolean,
-)
+    val airFilter: Boolean = false,
+    val fuelFilter: Boolean = false,
+) {
+    /** "filtro de óleo, de ar e de combustível" (vazio se nenhum). */
+    val filtersText: String get() {
+        val f = listOfNotNull("óleo".takeIf { filter }, "ar".takeIf { airFilter }, "combustível".takeIf { fuelFilter })
+        return when (f.size) {
+            0 -> ""
+            1 -> "filtro de ${f[0]}"
+            else -> "filtros de " + f.dropLast(1).joinToString(", ") + " e " + f.last()
+        }
+    }
+}
 
 enum class OilStatus { UNKNOWN, OK, SOON, DUE }
 
@@ -75,7 +87,8 @@ class OilTracker(private val prefs: SharedPreferences) {
         (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             OilChange(o.getLong("ts"), o.getDouble("km"), o.optString("type"), o.optInt("interval", 5000),
-                o.optInt("months", 6), o.optBoolean("filter", false))
+                o.optInt("months", 6), o.optBoolean("filter", false),
+                o.optBoolean("air", false), o.optBoolean("fuel", false))
         }.sortedByDescending { it.km }
     } catch (_: Exception) { emptyList() }
 
@@ -83,7 +96,8 @@ class OilTracker(private val prefs: SharedPreferences) {
         val arr = JSONArray()
         history.forEach { c ->
             arr.put(JSONObject().put("ts", c.ts).put("km", c.km).put("type", c.oilType)
-                .put("interval", c.intervalKm).put("months", c.months).put("filter", c.filter))
+                .put("interval", c.intervalKm).put("months", c.months).put("filter", c.filter)
+                .put("air", c.airFilter).put("fuel", c.fuelFilter))
         }
         prefs.edit().putString("oil_history", arr.toString()).apply()
     }

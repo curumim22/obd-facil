@@ -114,7 +114,7 @@ fun OilCard(plan: OilPlan?, history: List<OilChange>, onRegister: () -> Unit, on
                         Column(Modifier.weight(1f)) {
                             Text("${fmtDate(c.ts)} · ${brKm(c.km)} km", style = MaterialTheme.typography.bodyMedium)
                             Text("${c.oilType.ifBlank { "óleo não informado" }} · a cada ${brKm(c.intervalKm.toDouble())} km" +
-                                    (if (c.filter) " · com filtro" else ""),
+                                    c.filtersText.let { if (it.isBlank()) "" else " · $it" },
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = { onDelete(c.ts) }) { Icon(Icons.Rounded.Delete, "Apagar") }
@@ -128,7 +128,8 @@ fun OilCard(plan: OilPlan?, history: List<OilChange>, onRegister: () -> Unit, on
     }
 }
 
-data class OilInput(val km: Double, val oilType: String, val intervalKm: Int, val months: Int, val filter: Boolean, val ts: Long)
+data class OilInput(val km: Double, val oilType: String, val intervalKm: Int, val months: Int, val filter: Boolean,
+                    val airFilter: Boolean, val fuelFilter: Boolean, val ts: Long)
 
 @Composable
 fun OilDialog(estimatedOdometer: Double?, firstTime: Boolean, lastType: String, lastInterval: Int, lastMonths: Int,
@@ -138,6 +139,8 @@ fun OilDialog(estimatedOdometer: Double?, firstTime: Boolean, lastType: String, 
     var intervalText by remember { mutableStateOf(lastInterval.toString()) }
     var monthsText by remember { mutableStateOf(lastMonths.toString()) }
     var filter by remember { mutableStateOf(false) }
+    var airFilter by remember { mutableStateOf(false) }
+    var fuelFilter by remember { mutableStateOf(false) }
     var daysAgoText by remember { mutableStateOf("") }
 
     val km = kmText.filter { it.isDigit() }.toDoubleOrNull()
@@ -148,7 +151,7 @@ fun OilDialog(estimatedOdometer: Double?, firstTime: Boolean, lastType: String, 
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (firstTime) "Última troca de óleo" else "Troquei o óleo") },
+        title = { Text(if (firstTime) "Última revisão" else "Troquei o óleo") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(kmText, { kmText = it }, singleLine = true,
@@ -172,9 +175,19 @@ fun OilDialog(estimatedOdometer: Double?, firstTime: Boolean, lastType: String, 
                 OutlinedTextField(monthsText, { monthsText = it }, singleLine = true, label = { Text("Ou a cada (meses)") },
                     supportingText = { Text("O que vier primeiro. 0 = só por km.") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(filter, { filter = it })
-                    Text("Troquei também o filtro de óleo", style = MaterialTheme.typography.bodyLarge)
+                Text("Também troquei", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = filter && airFilter && fuelFilter,
+                        onClick = { val all = !(filter && airFilter && fuelFilter); filter = all; airFilter = all; fuelFilter = all },
+                        label = { Text("Kit completo") })
+                }
+                listOf(Triple("Filtro de óleo", filter) { v: Boolean -> filter = v },
+                       Triple("Filtro de ar", airFilter) { v: Boolean -> airFilter = v },
+                       Triple("Filtro de combustível", fuelFilter) { v: Boolean -> fuelFilter = v }).forEach { (label, on, set) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { set(!on) }) {
+                        Checkbox(on, { set(it) })
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
                 if (firstTime) OutlinedTextField(daysAgoText, { daysAgoText = it }, singleLine = true,
                     label = { Text("Há quantos dias foi? (0 = hoje)") },
@@ -186,7 +199,7 @@ fun OilDialog(estimatedOdometer: Double?, firstTime: Boolean, lastType: String, 
         },
         confirmButton = {
             TextButton(enabled = valid, onClick = {
-                onSave(OilInput(km!!, type, interval!!, months, filter,
+                onSave(OilInput(km!!, type, interval!!, months, filter, airFilter, fuelFilter,
                     System.currentTimeMillis() - daysAgo * 86_400_000L))
             }) { Text("Salvar") }
         },

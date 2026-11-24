@@ -348,8 +348,9 @@ class CarSession(private val app: Application) {
     }
 
     /** Registra uma troca de óleo. Se a km informada é a atual (ou a mais recente conhecida), atualiza o odômetro. */
-    fun registerOilChange(km: Double, oilType: String, intervalKm: Int, months: Int, filter: Boolean, ts: Long = System.currentTimeMillis()) {
-        oil.add(com.obdfacil.app.data.OilChange(ts, km, oilType.trim(), intervalKm, months, filter))
+    fun registerOilChange(km: Double, oilType: String, intervalKm: Int, months: Int, filter: Boolean,
+                          airFilter: Boolean = false, fuelFilter: Boolean = false, ts: Long = System.currentTimeMillis()) {
+        oil.add(com.obdfacil.app.data.OilChange(ts, km, oilType.trim(), intervalKm, months, filter, airFilter, fuelFilter))
         prefs.edit().putString("oil_type_last", oilType.trim()).putInt("oil_interval_last", intervalKm)
             .putInt("oil_months_last", months).apply()
         val est = tank.estimatedOdometer

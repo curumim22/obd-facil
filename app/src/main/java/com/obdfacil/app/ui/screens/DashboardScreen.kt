@@ -73,7 +73,7 @@ fun DashboardScreen(s: UiState, vm: CarSession, onRequestBluetooth: () -> Unit) 
         firstTime = s.oilPlan == null,
         lastType = vm.lastOilType(), lastInterval = vm.lastOilInterval(), lastMonths = vm.lastOilMonths(),
         onDismiss = { showOil = false },
-        onSave = { o -> showOil = false; vm.registerOilChange(o.km, o.oilType, o.intervalKm, o.months, o.filter, o.ts) },
+        onSave = { o -> showOil = false; vm.registerOilChange(o.km, o.oilType, o.intervalKm, o.months, o.filter, o.airFilter, o.fuelFilter, o.ts) },
     )
     if (showCompare) FuelCompareDialog(
         lastEthanol = vm.lastPrice(FuelType.ETANOL),
