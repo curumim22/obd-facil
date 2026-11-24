@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.obdfacil.app.ObdParserTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-11-24T21:54:44.687Z" hostname="ip-10-0-137-225" time="0.113">
+  <properties/>
+  <testcase name="noDataIsNull" classname="com.obdfacil.app.ObdParserTest" time="0.027"/>
+  <testcase name="dtcCan" classname="com.obdfacil.app.ObdParserTest" time="0.028"/>
+  <testcase name="kLineBusInit" classname="com.obdfacil.app.ObdParserTest" time="0.0"/>
+  <testcase name="supportedPids" classname="com.obdfacil.app.ObdParserTest" time="0.001"/>
+  <testcase name="rpmAndCoolant" classname="com.obdfacil.app.ObdParserTest" time="0.001"/>
+  <testcase name="misfireIsCritical" classname="com.obdfacil.app.ObdParserTest" time="0.025"/>
+  <testcase name="trimIgnoredWhenColdOrBrief" classname="com.obdfacil.app.ObdParserTest" time="0.006"/>
+  <testcase name="voltage" classname="com.obdfacil.app.ObdParserTest" time="0.016"/>
+  <testcase name="dtcKLine" classname="com.obdfacil.app.ObdParserTest" time="0.0"/>
+  <testcase name="trimHysteresis" classname="com.obdfacil.app.ObdParserTest" time="0.0"/>
+  <testcase name="chargingOk" classname="com.obdfacil.app.ObdParserTest" time="0.0"/>
+  <testcase name="overheatIsCritical" classname="com.obdfacil.app.ObdParserTest" time="0.005"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.obdfacil.app.FuelCompareTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-24T21:54:44.656Z" hostname="ip-10-0-137-225" time="0.009">
+  <properties/>
+  <testcase name="gasolineWinsAbove70Percent" classname="com.obdfacil.app.FuelCompareTest" time="0.003"/>
+  <testcase name="usesOwnRatioWhenBothKnown" classname="com.obdfacil.app.FuelCompareTest" time="0.001"/>
+  <testcase name="ethanolWinsBelow70Percent" classname="com.obdfacil.app.FuelCompareTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

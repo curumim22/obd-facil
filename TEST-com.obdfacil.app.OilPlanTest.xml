@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.obdfacil.app.OilPlanTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-11-24T21:54:44.818Z" hostname="ip-10-0-137-225" time="0.003">
+  <properties/>
+  <testcase name="dueByTime" classname="com.obdfacil.app.OilPlanTest" time="0.001"/>
+  <testcase name="noMonthLimit" classname="com.obdfacil.app.OilPlanTest" time="0.001"/>
+  <testcase name="inDay" classname="com.obdfacil.app.OilPlanTest" time="0.0"/>
+  <testcase name="soonByKm" classname="com.obdfacil.app.OilPlanTest" time="0.0"/>
+  <testcase name="unknownOdometer" classname="com.obdfacil.app.OilPlanTest" time="0.0"/>
+  <testcase name="dueByKm" classname="com.obdfacil.app.OilPlanTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

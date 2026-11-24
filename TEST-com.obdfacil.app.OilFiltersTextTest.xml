@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.obdfacil.app.OilFiltersTextTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-24T21:54:44.802Z" hostname="ip-10-0-137-225" time="0.011">
+  <properties/>
+  <testcase name="all" classname="com.obdfacil.app.OilFiltersTextTest" time="0.01"/>
+  <testcase name="one" classname="com.obdfacil.app.OilFiltersTextTest" time="0.001"/>
+  <testcase name="none" classname="com.obdfacil.app.OilFiltersTextTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
